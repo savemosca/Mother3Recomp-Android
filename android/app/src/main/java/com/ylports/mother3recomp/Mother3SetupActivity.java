@@ -1,6 +1,7 @@
 package com.ylports.mother3recomp;
 
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.res.Configuration;
 import android.os.Bundle;
 import android.text.InputType;
@@ -12,6 +13,10 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.ylports.mother3recomp.cloud.CloudSaves;
+
+import org.gbarecomp.GbaGameActivity;
+import org.gbarecomp.GbaGameConfig;
 import org.gbarecomp.GbaSetupActivity;
 
 import java.io.File;
@@ -31,6 +36,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     private static final String PREFS = "mother3_diagnostics";
     private static final String LAST_LOG = "last_log_snapshot";
     private Button raButton;
+    private Button cloudButton;
+    private CloudSaves cloudSaves;
+    /** Set when PLAY started the game; the next resume uploads its progress. */
+    private boolean gameLaunched;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -39,8 +48,29 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             .edit()
             .putBoolean("skip_launcher_on_boot", false)
             .apply();
+        GbaGameConfig config = GbaGameConfig.load(this);
+        cloudSaves = new CloudSaves(this, config.romFile,
+            config.romSha1.length > 0 ? config.romSha1[0] : "",
+            this::refreshCloudButton);
         super.onCreate(savedInstanceState);
         addRetroAchievementsButton();
+        addCloudSavesButton();
+    }
+
+    /** PLAY (and auto-start) go through here: sync the save first. */
+    @Override
+    public void startActivity(Intent intent) {
+        // An APK with an embedded ROM skips this screen (and finishes at once),
+        // so it has no cloud saves.
+        if (cloudSaves == null || hasBundledRom() || intent.getComponent() == null
+                || !GbaGameActivity.class.getName().equals(intent.getComponent().getClassName())) {
+            super.startActivity(intent);
+            return;
+        }
+        cloudSaves.syncBeforePlay(() -> {
+            gameLaunched = true;
+            Mother3SetupActivity.super.startActivity(intent);
+        });
     }
 
     @Override
@@ -48,26 +78,53 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         // The shared setup screen rebuilds its content on rotation/resize.
         super.onConfigurationChanged(newConfig);
         addRetroAchievementsButton();
+        addCloudSavesButton();
     }
 
     // ── RetroAchievements ─────────────────────────────────────────────────
 
     /** Inserts the RetroAchievements button above the shared PLAY footer. */
     private void addRetroAchievementsButton() {
+        raButton = addSetupButton(view -> showRetroAchievementsDialog());
+        refreshRetroAchievementsButton();
+    }
+
+    /** Adds a full-width button above the shared PLAY footer. */
+    private Button addSetupButton(View.OnClickListener listener) {
         ViewGroup content = findViewById(android.R.id.content);
-        if (content == null || content.getChildCount() == 0) return;
+        if (content == null || content.getChildCount() == 0) return null;
         View page = content.getChildAt(0);
-        if (!(page instanceof LinearLayout)) return;
+        if (!(page instanceof LinearLayout)) return null;
         LinearLayout column = (LinearLayout) page;
-        raButton = new Button(this);
-        raButton.setAllCaps(true);
-        raButton.setOnClickListener(view -> showRetroAchievementsDialog());
+        Button button = new Button(this);
+        button.setAllCaps(true);
+        button.setOnClickListener(listener);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         int margin = Math.round(8 * getResources().getDisplayMetrics().density);
         params.setMargins(margin * 2, margin, margin * 2, 0);
-        column.addView(raButton, Math.max(0, column.getChildCount() - 1), params);
-        refreshRetroAchievementsButton();
+        column.addView(button, Math.max(0, column.getChildCount() - 1), params);
+        return button;
+    }
+
+    // ── Cloud saves ───────────────────────────────────────────────────────
+
+    private boolean hasBundledRom() {
+        try (java.io.InputStream rom = getAssets().open(
+                "payload/roms/" + GbaGameConfig.load(this).romFile)) {
+            return rom.read() >= 0;
+        } catch (IOException missing) {
+            return false;
+        }
+    }
+
+    private void addCloudSavesButton() {
+        cloudButton = addSetupButton(view -> cloudSaves.showSettings());
+        refreshCloudButton();
+    }
+
+    private void refreshCloudButton() {
+        if (cloudButton != null) cloudButton.setText(cloudSaves.buttonLabel());
     }
 
     private void refreshRetroAchievementsButton() {
@@ -173,6 +230,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
         super.onResume();
         showNativeLogIfChanged();
+        if (gameLaunched) {
+            gameLaunched = false;
+            cloudSaves.syncAfterPlay();
+        }
     }
 
     private void showNativeLogIfChanged() {
@@ -198,7 +259,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
         final String visible = lastLines(text, 45);
         new AlertDialog.Builder(this)
-            .setTitle("MOTHER 3 — último arranque")
+            .setTitle("MOTHER 3 — last launch log")
             .setMessage(visible)
             .setPositiveButton("OK", null)
             .show();

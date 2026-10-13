@@ -1,0 +1,199 @@
+From 0758d54cef354eec795aa16e9b7cefeeed147e51 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 00:05:42 +0200
+Subject: [PATCH] Android: optional integer-scale presentation
+
+The Android full-screen layout fills the display height (6.75x on a 1080p
+panel). Integer scale instead picks the largest whole multiple that fits
+(6x = 1440x960, letterboxed on all sides).
+
+- [video] integer_scale sets the default; the in-game menu now offers
+  "Integer scaling" on Android and the choice is kept in config.ini
+  [Display], winning over the TOML default.
+- Desktop keeps the toggle hidden: its window scale is already integral.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/runtime/host_window.cpp | 46 ++++++++++++++++++++++++++++++++++++-
+ src/runtime/host_window.h   |  6 +++++
+ src/runtime/runtime.cpp     | 19 +++++++++++----
+ 3 files changed, 66 insertions(+), 5 deletions(-)
+
+diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
+index e1f8834..d80266f 100644
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -382,6 +382,9 @@ struct Backend {
+     // A game input policy consumes touches (RunOptions::input_frame).
+     bool touch_policy = false;
+     std::uint32_t touch_claims = 0;
++    // Whole-multiple presentation; saved = the player chose it in the menu.
++    bool integer_scale = false;
++    bool integer_scale_saved = false;
+     bool touch_emulation = false;   // desktop mouse -> touch
+     float px_per_mm = 96.0f / 25.4f;
+     float logical_px_per_mm = 96.0f / 25.4f;  // SDL-reported (logical) density
+@@ -1142,7 +1145,9 @@ void save_touch_config(const Backend* b) {
+             while (!line.empty() && line.back() == '\r') line.pop_back();
+             const size_t s = line.find_first_not_of(" \t");
+             const bool header = s != std::string::npos && line[s] == '[';
+-            if (header) in_section = line.compare(s, 7, "[Touch]") == 0;
++            if (header)
++                in_section = line.compare(s, 7, "[Touch]") == 0 ||
++                             line.compare(s, 9, "[Display]") == 0;
+             if (in_section) continue;
+             kept.push_back(line);
+         }
+@@ -1159,6 +1164,10 @@ void save_touch_config(const Backend* b) {
+         f << "toggle_x = " << b->toggle_fx << "\n";
+         f << "toggle_y = " << b->toggle_fy << "\n";
+     }
++    if (b->integer_scale_saved) {
++        f << "\n[Display]\n";
++        f << "integer_scale = " << (b->integer_scale ? 1 : 0) << "\n";
++    }
+ }
+ 
+ // GBA KEYINPUT bit order: 0=A 1=B 2=Sel 3=Sta 4=Right 5=Left 6=Up 7=Down 8=R 9=L.
+@@ -1465,6 +1474,16 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
+         // are no side rails to reserve, so the image fills the display too.
+         layout = compute_adaptive_presentation_layout(drawable_w, drawable_h,
+                                                       b->base_w, b->base_h);
++        if (b->integer_scale && layout.integer_scale == 0) {
++            // Largest whole multiple that fits, centred (letterboxed on all
++            // sides when the panel is not an exact multiple).
++            const int k = std::min(drawable_w / b->base_w, drawable_h / b->base_h);
++            if (k >= 1) {
++                const int w = b->base_w * k;
++                const int h = b->base_h * k;
++                layout = {(drawable_w - w) / 2, (drawable_h - h) / 2, w, h, k};
++            }
++        }
+     } else {
+         // Pad-only titles: reserve roughly one fifth of the display on each
+         // side for the controls. Prefer an exact integer multiple so pixel art
+@@ -2591,6 +2610,29 @@ void HostWindow::set_touch_config_dir(const char* dir) {
+             b->toggle_pos_saved = true;
+         }
+     });
++    ini_scan_section((b->touch_config_dir + "/config.ini").c_str(), "Display",
++                     [b](const char* key, const char* val) {
++        if (SDL_strcasecmp(key, "integer_scale") == 0) {
++            b->integer_scale = std::atoi(val) != 0;
++            b->integer_scale_saved = true;
++        }
++    });
++}
++
++void HostWindow::set_integer_scale(bool enabled, bool persist) {
++    if (!open_ || !impl_) return;
++    auto* b = static_cast<Backend*>(impl_);
++    if (!persist && b->integer_scale_saved) return;  // the player's choice wins
++    b->integer_scale = enabled;
++    if (persist) {
++        b->integer_scale_saved = true;
++        save_touch_config(b);
++    }
++}
++
++bool HostWindow::integer_scale() const {
++    if (!open_ || !impl_) return false;
++    return static_cast<const Backend*>(impl_)->integer_scale;
+ }
+ 
+ bool HostWindow::touch_pad_visible() const {
+@@ -3127,6 +3169,8 @@ int  HostWindow::volume() const { return 100; }
+ int  HostWindow::window_scale() const { return 1; }
+ void HostWindow::set_linear_filter(bool /*enabled*/) {}
+ bool HostWindow::linear_filter() const { return false; }
++void HostWindow::set_integer_scale(bool /*enabled*/, bool /*persist*/) {}
++bool HostWindow::integer_scale() const { return false; }
+ void HostWindow::set_audio_enabled(bool /*enabled*/) {}
+ bool HostWindow::audio_enabled() const { return false; }
+ void HostWindow::set_resize_driven_view(bool /*enabled*/) {}
+diff --git a/src/runtime/host_window.h b/src/runtime/host_window.h
+index bbb4ec6..39f3180 100644
+--- a/src/runtime/host_window.h
++++ b/src/runtime/host_window.h
+@@ -86,6 +86,12 @@ public:
+     int  window_scale() const;
+     void set_linear_filter(bool enabled);
+     bool linear_filter() const;
++    // Whole-multiple presentation (Android full-screen layout): e.g. 6x =
++    // 1440x960 on a 1080p panel instead of the height-filling 6.75x. A
++    // `persist` change is remembered in config.ini [Display] and wins over
++    // the TOML default on later launches.
++    void set_integer_scale(bool enabled, bool persist);
++    bool integer_scale() const;
+     void set_audio_enabled(bool enabled);
+     bool audio_enabled() const;
+     void set_resize_driven_view(bool enabled);
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index b6ac6af..ab06a41 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -176,6 +176,9 @@ struct Args {
+     int  volume = 100;            // --volume 0..100: pushed-sample gain
+     bool linear_filter = false;   // --linear-filter 1: linear texture scaling
+     bool sharp_filter = false;    // --sharp-filter 1: integer prescale + linear finish
++    // [video] integer_scale = true|false — default for whole-multiple
++    // presentation on Android (the in-game menu choice, once made, wins).
++    bool integer_scale = false;
+     bool affine_filter = false;   // --affine-filter 1: game-authorized smoothing
+     float gyro_sensitivity = 0.25f; // --gyro-sensitivity 0.25..4.00
+     // [audio] shadow = true|false — arm the MP2K verified-enhancement shadow
+@@ -263,6 +266,7 @@ int runtime_ui_get(void* opaque, const RecompRuntimeUiItem* item, int* out) {
+     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE) == 0) *out = c->window->window_scale();
+     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VIEW_MODE) == 0) *out = c->view_mode;
+     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER) == 0) *out = c->window->linear_filter();
++    else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_INTEGER_SCALE) == 0) *out = c->window->integer_scale();
+     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_AUDIO) == 0) *out = c->window->audio_enabled();
+     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VOLUME) == 0) *out = c->window->volume();
+     else if (std::strcmp(item->key, GBARECOMP_UI_KEY_STATE_SLOT) == 0) *out = c->state_slot;
+@@ -295,6 +299,8 @@ int runtime_ui_set(void* opaque, const RecompRuntimeUiItem* item, int value) {
+         c->view_mode_dirty = true;
+     } else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER) == 0)
+         c->window->set_linear_filter(value != 0);
++    else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_INTEGER_SCALE) == 0)
++        c->window->set_integer_scale(value != 0, /*persist=*/true);
+     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_AUDIO) == 0)
+         c->window->set_audio_enabled(value != 0);
+     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VOLUME) == 0)
+@@ -754,6 +760,8 @@ bool apply_toml_file(const std::filesystem::path& path, Args* args,
+             args->resize_view = (val == "true" || val == "1");
+         } else if (section == "video" && key == "sharp_filter") {
+             args->sharp_filter = (val == "true" || val == "1");
++        } else if (section == "video" && key == "integer_scale") {
++            args->integer_scale = (val == "true" || val == "1");
+         } else if (section == "video" && key == "affine_filter") {
+             args->affine_filter = (val == "true" || val == "1");
+         } else if (section == "video" && key == "widescreen") {
+@@ -2836,6 +2844,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+             win.configure_touch(opts.input_frame != nullptr,
+                                 opts.touch_gesture_claims,
+                                 opts.touch_pad_default, args.touch_emulation);
++            win.set_integer_scale(args.integer_scale, /*persist=*/false);
+             win.set_touch_config_dir(exe_dir.c_str());
+         }
+         win.set_host_overlay(opts.host_overlay);
+@@ -2936,11 +2945,13 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                 RECOMP_RUNTIME_UI_STANDARD_SAVE_STATE |
+                 RECOMP_RUNTIME_UI_STANDARD_LOAD_STATE;
+         }
+-        // INTEGER_SCALE is deliberately absent: HostWindow::adjust_scale only
++        // INTEGER_SCALE is absent on desktop: HostWindow::adjust_scale only
+         // ever produces integer scales (clamped 1..8), so there is no
+-        // fractional mode for a toggle to switch off. Offering one would
+-        // advertise a choice the presentation path cannot make.
+-#if !defined(__ANDROID__)
++        // fractional mode for a toggle to switch off. Android's full-screen
++        // layout does fill the display fractionally, so it offers the choice.
++#if defined(__ANDROID__)
++        runtime_ui_config.features |= RECOMP_RUNTIME_UI_STANDARD_INTEGER_SCALE;
++#else
+         runtime_ui_config.features |=
+             RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN |
+             RECOMP_RUNTIME_UI_STANDARD_WINDOW_SCALE;
+-- 
+2.56.0
+

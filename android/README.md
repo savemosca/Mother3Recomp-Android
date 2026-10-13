@@ -27,11 +27,16 @@ T820 and its 1920x1080 AMOLED panel:
   `src/main.cpp`; the log line `host_window: audio=bridge ...` shows the
   values in use.
 
-The engine patch in `patches/gbarecomp/` (applied by the build script) also
-benefits every handheld: with a physical controller the touch pad starts
+The engine patches in `patches/gbarecomp/` (applied by the build script) also
+benefit every handheld: with a physical controller the touch pad starts
 hidden, and with the pad hidden the game fills the display height (6.75x on
-1080p) through the sharp scaler instead of a 4x image between empty rails.
-The pad toggle in the corner still shows it.
+1080p, exact 3:2) through the sharp scaler instead of a 4x image between
+empty rails. The pad toggle in the corner still shows it.
+
+**Integer scaling** (in-game menu > Graphics) switches to the largest whole
+multiple instead: 6x = 1440x960 on the RG556, letterboxed on all sides. The
+choice is kept in `config.ini` `[Display]`; `[video] integer_scale = true` in
+`game_android_*.toml` makes it the default for new installs.
 
 `--generated-opt -O2` compiles the generated corpus at -O2 instead of -O1;
 expect a much longer native build.
@@ -67,3 +72,32 @@ uses flash, whose reads go through a command state machine).
 
 The build script clones rcheevos `v12.5.0` into `third_party/rcheevos`.
 Without it the build continues with RetroAchievements disabled.
+
+## Cloud saves (RomM / Hoard)
+
+The setup screen's **Cloud saves** button keeps the save file
+(`files/roms/<rom>.sav`) in sync with a self-hosted server. Like
+RetroAchievements this needs a `--no-embed` build, since an APK with an
+embedded ROM skips the setup screen.
+
+- **[RomM](https://github.com/rommapp/romm)**: enter the server address, then
+  approve the shown code on RomM's `/pair/device` page (phone or PC). The
+  game must be in your RomM library: the save attaches to the ROM with the
+  same SHA-1 as the one imported on the device. Uploads are filed under the
+  emulator folder `mother3recomp`; saves from other emulators for that ROM
+  (e.g. mGBA, 64 KiB with or without its 16-byte RTC footer) are picked up.
+- **[Hoard](https://github.com/rleeon/hoard)** (self-hosted server): sign in
+  with an admin account, which mints a device token (the password is not
+  stored), or paste a device token from the web panel (*Users > New token*).
+  The save is the Hoard game `mother-3`, label `default`; every upload is a
+  new version. Hoard Cloud (hoard.services) is not supported.
+
+Sync runs when PLAY is pressed and when the game exits back to the setup
+screen. It compares the device's save, the cloud's newest save and the
+version both last agreed on: the side that changed is copied over the other,
+and if both changed the player chooses. A replaced local save is first
+copied to `files/save-backups/` (10 kept). A failed sync never blocks
+playing. Nothing is synced while the game is running.
+
+Plain `http://` addresses are allowed for home servers; tokens then travel
+unencrypted on that network.
