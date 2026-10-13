@@ -68,7 +68,14 @@ The game is identified by the MD5 of the whole ROM file, the RetroAchievements
 GBA method. If the banner says *ROM not recognized*, that MD5 is not linked
 to game 677: compare it with the game's supported hashes on the site.
 Achievements that read cartridge save memory are not supported (MOTHER 3
-uses flash, whose reads go through a command state machine).
+uses flash, whose reads go through a command state machine). If the set has
+any, the start banner says "(N unsupported)" and `android-runtime.log` lists
+them as `ra: unsupported achievement <id>: <title>`.
+
+Partial progress (hit counts, a challenge in progress) is stored beside each
+save state and the suspend state as `<state>.ra`, so it survives the app
+being closed in the background and follows manual state loads. Loading a
+state without that file resets partial progress instead of mixing moments.
 
 The build script clones rcheevos `v12.5.0` into `third_party/rcheevos`.
 Without it the build continues with RetroAchievements disabled.

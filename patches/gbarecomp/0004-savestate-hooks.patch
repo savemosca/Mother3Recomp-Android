@@ -1,0 +1,71 @@
+From 1007f6c20f8781ed24aa636f781453824f26327d Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 00:30:46 +0200
+Subject: [PATCH] RunOptions::savestate_written / savestate_loaded
+
+Game hooks after every engine savestate write and read (save-state slots,
+the mobile suspend state, rewind's in-memory states reported as nullptr),
+so game-owned host state such as an achievement runtime's partial progress
+can be stored beside the state and restored with it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/runtime/runtime.cpp |  6 +++++-
+ src/runtime/runtime.h   | 10 ++++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index ab06a41..44f65d5 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -2171,7 +2171,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+     };
+     auto do_savestate_save = [&](const std::string& path,
+                                  std::string& e) -> bool {
+-        return debug::save_state(path.c_str(), make_snapshot_ctx(), &e);
++        if (!debug::save_state(path.c_str(), make_snapshot_ctx(), &e)) return false;
++        if (opts.savestate_written) opts.savestate_written(path.c_str());
++        return true;
+     };
+     auto do_savestate_load = [&](const std::string& path,
+                                  std::string& e) -> bool {
+@@ -2193,6 +2195,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+         g_runtime_cycles = 0;
+         runtime_fp_reset();
+         ++g_runtime_state_epoch;
++        if (opts.savestate_loaded) opts.savestate_loaded(path.c_str());
+         return true;
+     };
+     auto do_savestate_save_bytes = [&](std::vector<uint8_t>& bytes,
+@@ -2209,6 +2212,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+         g_runtime_cycles = 0;
+         runtime_fp_reset();
+         ++g_runtime_state_epoch;
++        if (opts.savestate_loaded) opts.savestate_loaded(nullptr);
+         return true;
+     };
+ 
+diff --git a/src/runtime/runtime.h b/src/runtime/runtime.h
+index 7d43087..b9fec48 100644
+--- a/src/runtime/runtime.h
++++ b/src/runtime/runtime.h
+@@ -155,6 +155,16 @@ struct RunOptions {
+     // presentation. Null installs nothing.
+     void (*vblank_frame)() = nullptr;
+ 
++    // Game-owned state that must travel with a savestate (an achievement
++    // runtime's partial progress, for instance). Called on the thread that
++    // wrote/read the state, with the guest stopped, after the engine's own
++    // state at `path` succeeded; the game keeps its data beside it (e.g.
++    // `path` + ".ra"). Covers save-state slots and the mobile suspend state.
++    // savestate_loaded(nullptr) reports an in-memory state (rewind), which
++    // has no file to pair with. Null installs nothing.
++    void (*savestate_written)(const char* path) = nullptr;
++    void (*savestate_loaded)(const char* path) = nullptr;
++
+     // Gestures the game's policy owns (TouchClaim bits). An unclaimed
+     // long-press still opens the runtime settings menu; a three-finger tap
+     // always does.
+-- 
+2.56.0
+

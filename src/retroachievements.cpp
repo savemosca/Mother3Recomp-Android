@@ -10,6 +10,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -93,6 +94,14 @@ struct Session {
 };
 
 Session g;
+
+// Partial progress (hit counts, active challenges) travels with savestates in
+// a "<state>.ra" file. The hooks run with the guest stopped but possibly off
+// the guest thread, hence the mutex. Progress read before the game finished
+// loading (the suspend state resumes at launch, before login) waits here.
+std::mutex g_progress_mutex;
+std::vector<std::uint8_t> g_pending_progress;
+bool g_game_loaded = false;
 
 // ── JNI bridge ──────────────────────────────────────────────────────────────
 
@@ -363,6 +372,24 @@ void RC_CCONV on_event(const rc_client_event_t* event, rc_client_t* client) {
     }
 }
 
+// Lists achievements this client cannot evaluate (e.g. ones reading memory
+// it does not expose) in android-runtime.log.
+void log_unsupported(rc_client_t* client) {
+    rc_client_achievement_list_t* list = rc_client_create_achievement_list(
+        client, RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE, RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_LOCK_STATE);
+    if (!list) return;
+    for (uint32_t b = 0; b < list->num_buckets; ++b) {
+        const rc_client_achievement_bucket_t& bucket = list->buckets[b];
+        if (bucket.bucket_type != RC_CLIENT_ACHIEVEMENT_BUCKET_UNSUPPORTED) continue;
+        for (uint32_t i = 0; i < bucket.num_achievements; ++i) {
+            const rc_client_achievement_t* a = bucket.achievements[i];
+            std::fprintf(stderr, "ra: unsupported achievement %u: %s\n", a->id,
+                         a->title ? a->title : "");
+        }
+    }
+    rc_client_destroy_achievement_list(list);
+}
+
 void RC_CCONV on_game_loaded(int result, const char* error, rc_client_t* client, void*) {
     if (result == RC_NO_GAME_LOADED) {
         std::string hash;
@@ -377,13 +404,28 @@ void RC_CCONV on_game_loaded(int result, const char* error, rc_client_t* client,
         notice("RetroAchievements: game load failed", error ? error : rc_error_str(result));
         return;
     }
+    {
+        std::lock_guard<std::mutex> lock(g_progress_mutex);
+        g_game_loaded = true;
+        if (!g_pending_progress.empty()) {
+            const int r = rc_client_deserialize_progress_sized(
+                client, g_pending_progress.data(), g_pending_progress.size());
+            std::fprintf(stderr, "ra: restored partial progress from the resumed state: %s\n",
+                         r == RC_OK ? "ok" : rc_error_str(r));
+            g_pending_progress.clear();
+        }
+    }
     const rc_client_game_t* game = rc_client_get_game_info(client);
     rc_client_user_game_summary_t summary{};
     rc_client_get_user_game_summary(client, &summary);
-    notice(game && game->title ? game->title : "RetroAchievements",
-           std::to_string(summary.num_unlocked_achievements) + " / " +
-               std::to_string(summary.num_core_achievements) +
-               " achievements unlocked - softcore mode");
+    std::string detail = std::to_string(summary.num_unlocked_achievements) + " / " +
+                         std::to_string(summary.num_core_achievements) +
+                         " achievements unlocked - softcore mode";
+    if (summary.num_unsupported_achievements > 0) {
+        detail += " (" + std::to_string(summary.num_unsupported_achievements) + " unsupported)";
+        log_unsupported(client);
+    }
+    notice(game && game->title ? game->title : "RetroAchievements", detail);
 }
 
 void RC_CCONV on_login(int result, const char* error, rc_client_t* client, void*) {
@@ -461,6 +503,63 @@ void drain_responses() {
     }
 }
 
+// ── Savestate hooks ─────────────────────────────────────────────────────────
+
+std::string progress_path(const char* state_path) {
+    return std::string(state_path) + ".ra";
+}
+
+void ra_savestate_written(const char* path) {
+    std::vector<std::uint8_t> data;
+    {
+        std::lock_guard<std::mutex> lock(g_progress_mutex);
+        if (g_game_loaded && g.client) {
+            data.resize(rc_client_progress_size(g.client));
+            if (data.empty() || rc_client_serialize_progress_sized(
+                                    g.client, data.data(), data.size()) != RC_OK) {
+                data.clear();
+            }
+        } else {
+            data = g_pending_progress;  // not applied yet: keep it with the state
+        }
+    }
+    const std::string sidecar = progress_path(path);
+    if (data.empty()) {
+        std::remove(sidecar.c_str());
+        return;
+    }
+    const std::string temp = sidecar + ".tmp";
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(data.data()),
+                  static_cast<std::streamsize>(data.size()));
+        if (!out) {
+            std::remove(temp.c_str());
+            return;
+        }
+    }
+    std::rename(temp.c_str(), sidecar.c_str());
+}
+
+void ra_savestate_loaded(const char* path) {
+    std::vector<std::uint8_t> data;
+    if (path) {
+        std::ifstream in(progress_path(path), std::ios::binary);
+        data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    std::lock_guard<std::mutex> lock(g_progress_mutex);
+    if (g_game_loaded && g.client) {
+        // A state without saved progress resets it rather than keeping counts
+        // from another moment of play.
+        const int r = rc_client_deserialize_progress_sized(
+            g.client, data.empty() ? nullptr : data.data(), data.size());
+        std::fprintf(stderr, "ra: partial progress %s: %s\n",
+                     data.empty() ? "reset" : "restored", r == RC_OK ? "ok" : rc_error_str(r));
+    } else {
+        g_pending_progress = std::move(data);
+    }
+}
+
 void ra_frame() {
     if (!g.started) {
         g.started = true;
@@ -523,6 +622,8 @@ void ra_install(gbarecomp::RunOptions& opts, const char* rom_path) {
     }
     opts.vblank_frame = ra_frame;
     opts.host_overlay = ra_overlay;
+    opts.savestate_written = ra_savestate_written;
+    opts.savestate_loaded = ra_savestate_loaded;
 }
 
 void ra_shutdown() {
@@ -534,6 +635,11 @@ void ra_shutdown() {
             g.net->responses.clear();
         }
         g.net->wake.notify_all();
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_progress_mutex);
+        g_game_loaded = false;
+        g_pending_progress.clear();
     }
     if (g.client) rc_client_destroy(g.client);
     g = Session{};

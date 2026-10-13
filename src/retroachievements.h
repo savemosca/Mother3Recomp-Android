@@ -16,7 +16,9 @@ namespace gbarecomp { struct RunOptions; }
 
 namespace mother3 {
 
-// Hooks the achievement runtime into the game's per-frame and overlay seams.
+// Hooks the achievement runtime into the game's per-frame, overlay and
+// savestate seams (partial progress is kept in "<state>.ra" beside each
+// save state and the suspend state).
 // `rom_path` is the imported ROM, relative to app-private storage; it is
 // hashed (MD5 of the whole file, the RetroAchievements GBA method) to
 // identify the game.
