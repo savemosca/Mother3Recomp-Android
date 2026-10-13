@@ -1,0 +1,250 @@
+From d5e16ef7d876c736153b3f050bceec8f7e48145e Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 23:38:09 +0200
+Subject: [PATCH] Android handheld tuning: full-screen sharp scaling, audio
+ knobs, big-core pinning
+
+- Mobile layout fills the display when the touch pad is hidden instead of
+  always reserving side rails (1080p handhelds: 4x -> 6.75x).
+- The touch pad starts hidden when a physical controller is present and the
+  player has not saved a choice.
+- The sharp scaler (integer prescale + linear finish) now also runs on
+  Android; the copy is shared with the desktop explicit-destination path.
+- GBARECOMP_AUDIO_SAMPLES / _TARGET_MS / _PREROLL_MS override the audio
+  callback size and bridge cushion; defaults are unchanged. The chosen
+  values are logged.
+- GBARECOMP_BIG_CORES=1 pins the Android game thread to the performance
+  cluster, derived from cpufreq.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/runtime/host_window.cpp     | 107 ++++++++++++++++++++------------
+ src/runtime/mobile_platform.cpp |  37 +++++++++++
+ 2 files changed, 105 insertions(+), 39 deletions(-)
+
+diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
+index 742e98e..e1f8834 100644
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -528,6 +528,38 @@ bool ensure_sharp_texture(Backend* b, int factor) {
+     return true;
+ }
+ 
++// Copy the game texture into `layout`. With the sharp scaler on, a
++// non-integer destination (e.g. 6.75x on a 1080p handheld) is prescaled with
++// nearest to the largest integer multiple and finished with linear, so pixel
++// columns stay even without blurring.
++void copy_game_texture(Backend* b, const PresentationLayout& layout) {
++    if (layout.width <= 0 || layout.height <= 0) return;
++    const SDL_Rect destination = {
++        layout.x, layout.y, layout.width, layout.height};
++    bool sharp_presented = false;
++    const int sharp_factor = b->sharp_filter
++        ? compute_sharp_prescale_factor(layout, b->base_w, b->base_h)
++        : 0;
++    if (sharp_factor > 0 &&
++        ensure_sharp_texture(b, sharp_factor) &&
++        SDL_SetRenderTarget(b->renderer, b->sharp_texture) == 0) {
++        const bool prescaled =
++            SDL_RenderCopy(b->renderer, b->texture, nullptr, nullptr) == 0;
++        const bool restored = SDL_SetRenderTarget(b->renderer, nullptr) == 0;
++        if (prescaled && restored) {
++            sharp_presented =
++                SDL_RenderCopy(b->renderer, b->sharp_texture, nullptr,
++                               &destination) == 0;
++        }
++    }
++    if (!sharp_presented) {
++        // Exact integer scales and unsupported render-target backends
++        // retain the crisp nearest path.
++        SDL_SetRenderTarget(b->renderer, nullptr);
++        SDL_RenderCopy(b->renderer, b->texture, nullptr, &destination);
++    }
++}
++
+ void close_game_controller(Backend* b) {
+     if (!b || !b->controller) return;
+ #if SDL_VERSION_ATLEAST(2, 0, 14)
+@@ -1279,6 +1311,17 @@ runtime::ColorSettings resolve_color_settings(const char* toml_screen) {
+     return s;
+ }
+ 
++// Integer tuning knob from the environment, clamped to [lo, hi]; unset or
++// unparsable values keep `fallback`.
++int env_int_clamped(const char* name, int fallback, int lo, int hi) {
++    const char* env = std::getenv(name);
++    if (!env || !*env) return fallback;
++    char* end = nullptr;
++    const long v = std::strtol(env, &end, 10);
++    if (end == env) return fallback;
++    return static_cast<int>(std::clamp<long>(v, lo, hi));
++}
++
+ // SDL audio pull callback: render exactly `len` bytes of device-rate mono S16
+ // from the bridge ring. The bridge emits faded silence (not raw zeros) before
+ // prime / on underrun, so a momentarily-starved producer no longer clicks.
+@@ -1413,9 +1456,13 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
+         SDL_GetWindowSize(b->window, &drawable_w, &drawable_h);
+     }
+     PresentationLayout layout{};
+-    if (b->resize_driven_view || b->expanded_view || b->touch_policy) {
++    const bool pad_shown = b->pad_visible && b->touch_controls;
++    if (b->resize_driven_view || b->expanded_view || b->touch_policy ||
++        !pad_shown) {
+         // Responsive games fill the whole display (live rotation included);
+         // touch-first games also fill it, since their controls are gestures.
++        // With the touch pad hidden (handhelds with physical controls) there
++        // are no side rails to reserve, so the image fills the display too.
+         layout = compute_adaptive_presentation_layout(drawable_w, drawable_h,
+                                                       b->base_w, b->base_h);
+     } else {
+@@ -1873,7 +1920,8 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+     want.freq     = 65536;
+     want.format   = AUDIO_S16SYS;
+     want.channels = 1;
+-    want.samples  = 1024;  // ~15 ms callback quantum at 65 kHz
++    want.samples  = static_cast<Uint16>(
++        env_int_clamped("GBARECOMP_AUDIO_SAMPLES", 1024, 128, 4096));
+     const char* direct_audio_env = std::getenv("GBARECOMP_AUDIO_DIRECT");
+     b->audio_direct =
+         direct_audio_env && *direct_audio_env && *direct_audio_env != '0';
+@@ -1921,10 +1969,20 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+             cfg.channels    = 1;
+             cfg.source_rate = 65536.0;                 // engine's standardized GBA mixer rate
+             cfg.host_rate   = static_cast<double>(got.freq);
+-            cfg.target_ms   = 60.0;                     // steady cushion (matches NES)
+-            cfg.preroll_ms  = 250.0;                    // boot pre-roll: hide the cold-start
+-                                                        // recomp warm-up hitch (drains to target)
++            // Steady cushion (matches NES) and boot pre-roll that hides the
++            // cold-start recomp warm-up hitch (drains to target). Both can be
++            // lowered for low-latency play; see GBARECOMP_AUDIO_* in README.
++            cfg.target_ms   = env_int_clamped("GBARECOMP_AUDIO_TARGET_MS", 60, 12, 250);
++            cfg.preroll_ms  = env_int_clamped("GBARECOMP_AUDIO_PREROLL_MS", 250, 0, 1000);
+             if (rab_init(&b->bridge, &cfg) == 0) b->bridge_ready = true;
++            std::fprintf(stderr,
++                         "host_window: audio=bridge driver=%s rate=%dHz "
++                         "quantum=%u target=%.0fms preroll=%.0fms\n",
++                         SDL_GetCurrentAudioDriver()
++                             ? SDL_GetCurrentAudioDriver() : "(unknown)",
++                         got.freq, static_cast<unsigned>(got.samples),
++                         cfg.target_ms, cfg.preroll_ms);
++            std::fflush(stderr);
+             SDL_PauseAudioDevice(b->audio_dev, 0);      // start the callback
+         }
+     }
+@@ -2255,43 +2313,12 @@ void HostWindow::present(const uint8_t* rgb888) {
+     }
+     if (touch_input_enabled(b)) publish_touch_presentation(b);
+ #if defined(__ANDROID__)
+-    const SDL_Rect destination{layout.x, layout.y, layout.width, layout.height};
+-    SDL_RenderCopy(b->renderer, b->texture, nullptr, &destination);
++    copy_game_texture(b, layout);
+ #else
+     if (!b->expanded_view && !b->resize_driven_view) {
+         SDL_RenderCopy(b->renderer, b->texture, nullptr, nullptr);
+     } else {
+-        if (layout.width > 0 && layout.height > 0) {
+-            const SDL_Rect destination = {
+-                layout.x, layout.y, layout.width, layout.height};
+-            bool sharp_presented = false;
+-            const int sharp_factor = b->sharp_filter
+-                ? compute_sharp_prescale_factor(
+-                      layout, b->base_w, b->base_h)
+-                : 0;
+-            if (sharp_factor > 0 &&
+-                ensure_sharp_texture(b, sharp_factor) &&
+-                SDL_SetRenderTarget(b->renderer, b->sharp_texture) == 0) {
+-                const bool prescaled =
+-                    SDL_RenderCopy(
+-                        b->renderer, b->texture, nullptr, nullptr) == 0;
+-                const bool restored =
+-                    SDL_SetRenderTarget(b->renderer, nullptr) == 0;
+-                if (prescaled && restored) {
+-                    sharp_presented =
+-                        SDL_RenderCopy(
+-                            b->renderer, b->sharp_texture, nullptr,
+-                            &destination) == 0;
+-                }
+-            }
+-            if (!sharp_presented) {
+-                // Exact integer scales and unsupported render-target backends
+-                // retain the crisp nearest path.
+-                SDL_SetRenderTarget(b->renderer, nullptr);
+-                SDL_RenderCopy(
+-                    b->renderer, b->texture, nullptr, &destination);
+-            }
+-        }
++        copy_game_texture(b, layout);
+     }
+ #endif
+     render_host_layers(b);
+@@ -2520,7 +2547,9 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
+     if (!b->pad_choice_saved) {
+         const bool platform_default =
+ #if defined(__ANDROID__)
+-            true;
++            // A device with built-in or attached physical controls (gaming
++            // handhelds) starts with the pad hidden; the toggle still shows it.
++            b->controller == nullptr;
+ #else
+             false;
+ #endif
+diff --git a/src/runtime/mobile_platform.cpp b/src/runtime/mobile_platform.cpp
+index 176a73b..2577fbb 100644
+--- a/src/runtime/mobile_platform.cpp
++++ b/src/runtime/mobile_platform.cpp
+@@ -7,6 +7,7 @@
+ 
+ #if defined(__ANDROID__)
+ #include <pthread.h>
++#include <sched.h>
+ #include <unistd.h>
+ 
+ #include <SDL.h>
+@@ -23,7 +24,43 @@ struct StackedCall {
+     char** argv = nullptr;
+     int result = 1;
+ };
++// GBARECOMP_BIG_CORES=1 keeps the game thread on the performance cluster
++// (every CPU whose max frequency is at least 80% of the fastest one), so the
++// scheduler cannot park the frame loop on a little core and drop frames while
++// the governor ramps up. Read from cpufreq, so no SoC table is needed.
++void pin_to_big_cores() {
++    const char* env = std::getenv("GBARECOMP_BIG_CORES");
++    if (!env || !*env || *env == '0') return;
++    const long cpus = sysconf(_SC_NPROCESSORS_CONF);
++    long freq[CPU_SETSIZE] = {};
++    long top = 0;
++    for (long cpu = 0; cpu < cpus && cpu < CPU_SETSIZE; ++cpu) {
++        char path[96];
++        std::snprintf(path, sizeof(path),
++                      "/sys/devices/system/cpu/cpu%ld/cpufreq/cpuinfo_max_freq", cpu);
++        if (std::FILE* f = std::fopen(path, "r")) {
++            if (std::fscanf(f, "%ld", &freq[cpu]) != 1) freq[cpu] = 0;
++            std::fclose(f);
++        }
++        if (freq[cpu] > top) top = freq[cpu];
++    }
++    if (top <= 0) return;
++    cpu_set_t set;
++    CPU_ZERO(&set);
++    int picked = 0;
++    for (long cpu = 0; cpu < cpus && cpu < CPU_SETSIZE; ++cpu) {
++        if (freq[cpu] * 5 >= top * 4) {
++            CPU_SET(cpu, &set);
++            ++picked;
++        }
++    }
++    const bool ok = picked > 0 && sched_setaffinity(0, sizeof(set), &set) == 0;
++    std::fprintf(stderr, "mobile: game thread big-core affinity %s (%d cpus, max %ld kHz)\n",
++                 ok ? "set" : "unavailable", picked, top);
++}
++
+ void* run_stacked(void* arg) {
++    pin_to_big_cores();
+     auto* call = static_cast<StackedCall*>(arg);
+     call->result = call->entry(call->argc, call->argv);
+     return nullptr;
+-- 
+2.56.0
+

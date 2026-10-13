@@ -88,6 +88,15 @@ int mother3_main(int argc, char** argv) {
     setenv("GBARECOMP_FORCE_INTERP", "1", 1);
 #endif
 
+#if defined(__ANDROID__) && defined(MOTHER3_TUNE_RG556)
+    // Anbernic RG556 preset. Battle combos are timed to the music, so trim
+    // the audio cushion (engine default 60 ms + 250 ms boot pre-roll).
+    // setenv(..., 0) leaves any value supplied by the environment in place.
+    setenv("GBARECOMP_AUDIO_SAMPLES", "512", 0);
+    setenv("GBARECOMP_AUDIO_TARGET_MS", "40", 0);
+    setenv("GBARECOMP_AUDIO_PREROLL_MS", "120", 0);
+#endif
+
     gbarecomp::RunOptions opts;
     opts.builtin_game_name = GBARECOMP_BUILTIN_NAME;
     opts.builtin_rom_sha1 =
@@ -132,6 +141,11 @@ int mother3_main(int argc, char** argv) {
 
 #if defined(__ANDROID__)
 extern "C" int SDL_main(int argc, char** argv) {
+#if defined(MOTHER3_TUNE_RG556)
+    // Read when the game thread below starts: keep the frame loop on the T820's
+    // Cortex-A76 cluster instead of letting it settle on a Cortex-A55.
+    setenv("GBARECOMP_BIG_CORES", "1", 0);
+#endif
     // The recompiled corpus can consume a much deeper host stack than a normal
     // SDLActivity thread. gbarecomp creates a dedicated, large-stack game thread.
     return gbarecomp::mobile_run_with_stack(mother3_main, argc, argv);

@@ -6,11 +6,18 @@ VARIANT="en"
 ROM=""
 BIOS=""
 JOBS="2"
+DEVICE=""
+GENERATED_OPT=""
 
 usage() {
   cat <<'EOF'
 Usage:
   tools/build-android.sh --rom /path/to/mother3.gba --bios /path/to/gba_bios.bin [--variant en|jpn] [--jobs N]
+                         [--device rg556] [--generated-opt -O2]
+
+--device rg556      Anbernic RG556 preset: ARMv8.2-A code scheduled for
+                    Cortex-A76, lower audio latency, game thread on big cores.
+--generated-opt     Optimization level for the generated corpus (default -O1).
 
 This creates a PRIVATE Android build. The ROM/BIOS and generated recompilation
 corpus stay local and are never committed.
@@ -23,6 +30,8 @@ while [[ $# -gt 0 ]]; do
     --bios) BIOS="$2"; shift 2 ;;
     --variant) VARIANT="$2"; shift 2 ;;
     --jobs) JOBS="$2"; shift 2 ;;
+    --device) DEVICE="$2"; shift 2 ;;
+    --generated-opt) GENERATED_OPT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -81,7 +90,26 @@ ACTUAL_BIOS_SHA="$(sha1_file "$BIOS")"
 }
 
 cd "$ROOT"
-git submodule update --init gbarecomp recomp-ui
+# .gitmodules declares these, but this tree records no submodule commits, so
+# `git submodule update` alone fetches nothing. Clone what is missing; the
+# engine is pinned to the revision the local patches were written against.
+GBARECOMP_REV="af47d28742a808291031d5af56f30f9f646366be"
+for sub in gbarecomp recomp-ui; do
+  if [[ -z "$(ls -A "$ROOT/$sub" 2>/dev/null)" ]]; then
+    git clone "$(git config -f .gitmodules "submodule.$sub.url")" "$ROOT/$sub"
+    [[ "$sub" == gbarecomp ]] && git -C "$ROOT/gbarecomp" checkout -q "$GBARECOMP_REV"
+  fi
+done
+# Local engine patches (patches/gbarecomp/*.patch), each applied once.
+for patch in "$ROOT"/patches/gbarecomp/*.patch; do
+  [[ -f "$patch" ]] || continue
+  if git -C "$ROOT/gbarecomp" apply --reverse --check "$patch" 2>/dev/null; then
+    echo "Engine patch already applied: $(basename "$patch")"
+  else
+    git -C "$ROOT/gbarecomp" apply "$patch"
+    echo "Applied engine patch: $(basename "$patch")"
+  fi
+done
 git -C gbarecomp config submodule.external/arm-recomp-core.url \
   https://github.com/mstan/arm-recomp-core.git
 git -C gbarecomp submodule update --init \
@@ -130,7 +158,9 @@ echo "Building private Android APK..."
     -PgbaAbis=arm64-v8a \
     -PgbaNativeJobs="$JOBS" \
     -PprivateRom="$ROM" \
-    -PprivateBios="$BIOS"
+    -PprivateBios="$BIOS" \
+    ${DEVICE:+-Pmother3Device="$DEVICE"} \
+    ${GENERATED_OPT:+-Pmother3GeneratedOpt="$GENERATED_OPT"}
 )
 
 echo

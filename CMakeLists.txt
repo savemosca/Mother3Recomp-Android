@@ -18,6 +18,20 @@ set(GBARECOMP_RUNTIME_UI_ROOT "${RECOMP_UI_ROOT}"
 set(GBARECOMP_ENABLE_MODS OFF CACHE BOOL
     "Mod catalog and trusted-plugin runtime — off during bring-up" FORCE)
 
+# Android device tuning preset (-Pmother3Device / tools/build-android.sh
+# --device). Applied before the engine is added so the runtime, PPU and APU
+# libraries get the same code generation as the game corpus.
+#   rg556: Anbernic RG556 (Unisoc T820, 1x2.7 GHz + 3x2.3 GHz Cortex-A76,
+#          4x Cortex-A55). ARMv8.2-A runs on both clusters; schedule for A76.
+set(MOTHER3_ANDROID_TUNE "" CACHE STRING "Android device preset: empty or rg556")
+set(MOTHER3_GENERATED_OPT "-O1" CACHE STRING
+    "Optimization level for the generated recompiled_*.cpp shards")
+if(ANDROID AND MOTHER3_ANDROID_TUNE STREQUAL "rg556")
+    add_compile_options(-march=armv8.2-a -mtune=cortex-a76)
+elseif(ANDROID AND NOT MOTHER3_ANDROID_TUNE STREQUAL "")
+    message(FATAL_ERROR "Unknown MOTHER3_ANDROID_TUNE='${MOTHER3_ANDROID_TUNE}'. Use rg556 or leave empty.")
+endif()
+
 if(NOT EXISTS "${GBARECOMP_ROOT}/CMakeLists.txt")
     message(FATAL_ERROR
         "GBARECOMP_ROOT does not point to a gbarecomp checkout:\n"
@@ -87,7 +101,7 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
         "/recompiled_[0-9]+\\.cpp$")
     if(VARIANT_RECOMPILED_SOURCES)
         set_source_files_properties(${VARIANT_RECOMPILED_SOURCES} PROPERTIES
-            COMPILE_OPTIONS "-O1;-g0")
+            COMPILE_OPTIONS "${MOTHER3_GENERATED_OPT};-g0")
     endif()
 
     target_include_directories(${TARGET} PRIVATE
@@ -107,6 +121,10 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
 
     if(VARIANT_BOOTSTRAP_INTERP)
         target_compile_definitions(${TARGET} PRIVATE MOTHER3_BOOTSTRAP_INTERP=1)
+    endif()
+
+    if(ANDROID AND MOTHER3_ANDROID_TUNE STREQUAL "rg556")
+        target_compile_definitions(${TARGET} PRIVATE MOTHER3_TUNE_RG556=1)
     endif()
 
     target_compile_definitions(${TARGET} PRIVATE

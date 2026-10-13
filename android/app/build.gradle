@@ -18,6 +18,16 @@ if (!english && !["jp", "jpn", "ja", "mother3"].contains(requested)) {
         "Unknown -Pmother3Variant=${requested}. Use en (default) or jpn.")
 }
 
+// -Pmother3Device=rg556 tunes the native build for one handheld (see
+// MOTHER3_ANDROID_TUNE in ../CMakeLists.txt). Empty = generic arm64.
+def device = (providers.gradleProperty("mother3Device").orNull ?: "").toString().toLowerCase()
+if (!["", "rg556"].contains(device)) {
+    throw new GradleException("Unknown -Pmother3Device=${device}. Use rg556 or omit it.")
+}
+// -Pmother3GeneratedOpt=-O2 raises the generated corpus above its default -O1
+// (much longer, more memory-hungry native compile).
+def generatedOpt = providers.gradleProperty("mother3GeneratedOpt").orNull
+
 def variant = english ? "mother3en" : "mother3"
 def romFile = english ? "mother3_en.gba" : "mother3_jpn.gba"
 def romSha1 = english
@@ -32,7 +42,7 @@ ext.gbaGame = [
         ? "com.ylports.mother3recomp.en.dev"
         : "com.ylports.mother3recomp.jpn.dev",
     versionCode    : 2,
-    versionName    : "0.1.3-fast",
+    versionName    : device ? "0.1.3-fast-${device}" : "0.1.3-fast",
     title          : title,
     romLabel       : english
         ? "MOTHER 3 English fan-translation ROM"
@@ -42,7 +52,8 @@ ext.gbaGame = [
     romFile        : romFile,
     biosRequired   : true,
     orientation    : "landscape",
-    payloadVersion : "1",
+    // Bump whenever the packaged game.toml changes so installs pick it up.
+    payloadVersion : "2",
     setupNote      : "Importa tu propia ROM compatible y un dump de GBA BIOS. " +
                      "El APK público no incluye archivos de Nintendo.",
     variant        : variant,
@@ -54,7 +65,9 @@ ext.gbaGame = [
     gameRoot       : gameRoot,
     engineRoot     : engineRoot,
     recompUiRoot   : recompUiRoot,
-    cmakeArguments : ["-DMOTHER3_ANDROID_VARIANT=${variant}"],
+    cmakeArguments : ["-DMOTHER3_ANDROID_VARIANT=${variant}",
+                      "-DMOTHER3_ANDROID_TUNE=${device}"] +
+                     (generatedOpt ? ["-DMOTHER3_GENERATED_OPT=${generatedOpt}"] : []),
     nativeJobs     : 2,
     releaseAbis    : ["arm64-v8a"],
     debugAbis      : ["arm64-v8a", "x86_64"],

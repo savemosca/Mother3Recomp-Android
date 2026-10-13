@@ -28,3 +28,12 @@ type = "flash512"
 [runtime]
 debug_port   = 19893
 window_title = "Mother3Recomp"
+
+[video]
+# Integer nearest prescale + linear finish. Only active when the image is not
+# an exact integer multiple, e.g. 6.75x full-height on a 1920x1080 handheld
+# with the touch pad hidden; keeps every GBA pixel the same width.
+sharp_filter = true
+# Present-time colour simulation: raw|unlit|frontlit|backlit|classic.
+# Raw is very saturated on AMOLED panels; backlit approximates a GBA SP.
+# screen = "backlit"
