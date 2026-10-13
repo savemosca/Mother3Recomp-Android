@@ -3,8 +3,15 @@ package com.ylports.mother3recomp;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.os.Bundle;
 import android.text.InputType;
+import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -25,7 +32,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Thin MOTHER 3 launcher diagnostic wrapper.
+ * MOTHER 3 front screen.
+ *
+ * Without embedded assets it is the shared ROM/BIOS setup screen plus the
+ * RetroAchievements and cloud-save buttons. An APK with the ROM and BIOS
+ * embedded shows a small launcher instead (PLAY, RetroAchievements, cloud
+ * saves), which the game returns to when it exits.
  *
  * Native stdout/stderr are redirected by gbarecomp to
  * files/android-runtime.log. If SDL_main returns or the previous native
@@ -38,6 +50,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     private Button raButton;
     private Button cloudButton;
     private CloudSaves cloudSaves;
+    private GbaGameConfig gameConfig;
+    /** The APK embeds the ROM/BIOS: this screen is the launcher. */
+    private boolean launcherMode;
+    private Button playButton;
     /** Set when PLAY started the game; the next resume uploads its progress. */
     private boolean gameLaunched;
 
@@ -48,21 +64,39 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             .edit()
             .putBoolean("skip_launcher_on_boot", false)
             .apply();
-        GbaGameConfig config = GbaGameConfig.load(this);
-        cloudSaves = new CloudSaves(this, config.romFile,
-            config.romSha1.length > 0 ? config.romSha1[0] : "",
+        gameConfig = GbaGameConfig.load(this);
+        cloudSaves = new CloudSaves(this, gameConfig.romFile,
+            gameConfig.romSha1.length > 0 ? gameConfig.romSha1[0] : "",
             this::refreshCloudButton);
         super.onCreate(savedInstanceState);
-        addRetroAchievementsButton();
-        addCloudSavesButton();
+        if (!launcherMode) {
+            addRetroAchievementsButton();
+            addCloudSavesButton();
+        }
+    }
+
+    /** Embedded ROM/BIOS: show the launcher instead of starting at once. */
+    @Override
+    protected void onBundledAssets() {
+        launcherMode = true;
+        setContentView(buildLauncher());
+        playButton.requestFocus();
+    }
+
+    /** START on the gamepad plays from anywhere on the launcher. */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (launcherMode && event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_START) {
+            if (event.getAction() == KeyEvent.ACTION_UP) playButton.performClick();
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     /** PLAY (and auto-start) go through here: sync the save first. */
     @Override
     public void startActivity(Intent intent) {
-        // An APK with an embedded ROM skips this screen (and finishes at once),
-        // so it has no cloud saves.
-        if (cloudSaves == null || hasBundledRom() || intent.getComponent() == null
+        if (cloudSaves == null || intent.getComponent() == null
                 || !GbaGameActivity.class.getName().equals(intent.getComponent().getClassName())) {
             super.startActivity(intent);
             return;
@@ -75,10 +109,99 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
-        // The shared setup screen rebuilds its content on rotation/resize.
+        // The shared setup screen rebuilds its content on rotation/resize; the
+        // launcher's centred column needs no rebuild.
         super.onConfigurationChanged(newConfig);
+        if (launcherMode) return;
         addRetroAchievementsButton();
         addCloudSavesButton();
+    }
+
+    // ── Launcher (embedded ROM/BIOS) ──────────────────────────────────────
+
+    private View buildLauncher() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setGravity(Gravity.CENTER);
+        page.setBackgroundColor(Color.rgb(9, 11, 24));
+        page.setPadding(dp(24), dp(16), dp(24), dp(16));
+
+        TextView eyebrow = label("RECOMPILED FOR ANDROID", 12, Color.rgb(78, 216, 255));
+        eyebrow.setTypeface(Typeface.DEFAULT_BOLD);
+        eyebrow.setLetterSpacing(0.16f);
+        page.addView(eyebrow);
+
+        TextView title = label(gameConfig.title, 30, Color.WHITE);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        page.addView(title, column(-2, 0, dp(2), dp(18)));
+
+        playButton = launcherButton("PLAY", true);
+        playButton.setOnClickListener(view -> startActivity(new Intent(this, gameActivityClass())));
+        page.addView(playButton, column(dp(58), 0, 0, dp(12)));
+
+        raButton = launcherButton("", false);
+        raButton.setOnClickListener(view -> showRetroAchievementsDialog());
+        page.addView(raButton, column(dp(48), 0, 0, dp(10)));
+        refreshRetroAchievementsButton();
+
+        cloudButton = launcherButton("", false);
+        cloudButton.setOnClickListener(view -> cloudSaves.showSettings());
+        page.addView(cloudButton, column(dp(48), 0, 0, dp(14)));
+        refreshCloudButton();
+
+        page.addView(label("START plays. Quitting the game returns here.", 13,
+            Color.rgb(132, 143, 173)));
+        return page;
+    }
+
+    private Button launcherButton(String text, boolean primary) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setAllCaps(false);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setTextSize(primary ? 18 : 14);
+        button.setTextColor(primary ? Color.rgb(8, 16, 27) : Color.WHITE);
+        button.setFocusable(true);
+        // The custom background hides the platform focus highlight, so the
+        // focused button (D-pad navigation) gets its own yellow border.
+        int fill = primary ? Color.rgb(78, 216, 255) : Color.rgb(20, 25, 48);
+        int edge = primary ? Color.TRANSPARENT : Color.rgb(48, 58, 92);
+        StateListDrawable states = new StateListDrawable();
+        states.addState(new int[] {android.R.attr.state_pressed}, rounded(fill, Color.rgb(255, 211, 78)));
+        states.addState(new int[] {android.R.attr.state_focused}, rounded(fill, Color.rgb(255, 211, 78)));
+        states.addState(new int[] {}, rounded(fill, edge));
+        button.setBackground(states);
+        return button;
+    }
+
+    private Drawable rounded(int fill, int stroke) {
+        GradientDrawable shape = new GradientDrawable();
+        shape.setColor(fill);
+        shape.setCornerRadius(dp(14));
+        shape.setStroke(dp(3), stroke);
+        return shape;
+    }
+
+    private TextView label(String text, float size, int color) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        view.setGravity(Gravity.CENTER);
+        return view;
+    }
+
+    /** A fixed-width centred row in the launcher column. */
+    private LinearLayout.LayoutParams column(int height, int left, int top, int bottom) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            height == -2 ? LinearLayout.LayoutParams.WRAP_CONTENT : dp(420),
+            height == -2 ? LinearLayout.LayoutParams.WRAP_CONTENT : height);
+        params.setMargins(left, top, 0, bottom);
+        return params;
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     // ── RetroAchievements ─────────────────────────────────────────────────
@@ -108,15 +231,6 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     }
 
     // ── Cloud saves ───────────────────────────────────────────────────────
-
-    private boolean hasBundledRom() {
-        try (java.io.InputStream rom = getAssets().open(
-                "payload/roms/" + GbaGameConfig.load(this).romFile)) {
-            return rom.read() >= 0;
-        } catch (IOException missing) {
-            return false;
-        }
-    }
 
     private void addCloudSavesButton() {
         cloudButton = addSetupButton(view -> cloudSaves.showSettings());
@@ -237,6 +351,8 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     }
 
     private void showNativeLogIfChanged() {
+        // A log still being written belongs to a game that is running.
+        if (org.libsdl.app.SdlSession.nativeRunning()) return;
         File log = new File(getFilesDir(), "android-runtime.log");
         if (!log.isFile() || log.length() == 0) return;
 
@@ -256,6 +372,8 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             .edit()
             .putString(LAST_LOG, text)
             .apply();
+        // A normal quit needs no report; a crash never writes this line.
+        if (text.contains("mother3: session ended, exit code 0\n")) return;
 
         final String visible = lastLines(text, 45);
         new AlertDialog.Builder(this)

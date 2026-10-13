@@ -49,16 +49,10 @@ from approved emulators, and its standalone policy excludes recompilations,
 so this client never requests hardcore. Save states, suspend/resume and
 fast-forward stay available.
 
-1. Build with `--no-embed` so the app keeps its setup screen (an APK with an
-   embedded ROM/BIOS starts the game directly and has no login screen):
-
-   ```bash
-   tools/build-android.sh --device rg556 --no-embed \
-     --rom /path/to/mother3_en.gba --bios /path/to/gba_bios.bin
-   ```
-
-2. On the device, import the ROM and BIOS once, then tap
-   **RetroAchievements: log in**. The password is exchanged once for an API
+1. Open the app. An APK with the ROM/BIOS embedded (the default of
+   `tools/build-android.sh`) shows a launcher; a `--no-embed` build shows
+   the setup screen, where the ROM and BIOS are imported once.
+2. Tap **RetroAchievements: log in**. The password is exchanged once for an API
    token; only the user name and token are stored, in app-private
    `retroachievements.ini`. The same button logs out.
 3. Press PLAY. A banner shows the set and your progress; unlocks appear as
@@ -82,10 +76,8 @@ Without it the build continues with RetroAchievements disabled.
 
 ## Cloud saves (RomM / Hoard)
 
-The setup screen's **Cloud saves** button keeps the save file
-(`files/roms/<rom>.sav`) in sync with a self-hosted server. Like
-RetroAchievements this needs a `--no-embed` build, since an APK with an
-embedded ROM skips the setup screen.
+The **Cloud saves** button (launcher or setup screen) keeps the save file
+(`files/roms/<rom>.sav`) in sync with a self-hosted server.
 
 - **[RomM](https://github.com/rommapp/romm)**: enter the server address, then
   approve the shown code on RomM's `/pair/device` page (phone or PC). The
@@ -111,3 +103,12 @@ save state also restores that state's save, as in any emulator.
 
 Plain `http://` addresses are allowed for home servers; tokens then travel
 unencrypted on that network.
+
+## Launcher
+
+An APK with the ROM and BIOS embedded opens a small launcher instead of
+starting the game at once: **PLAY**, **RetroAchievements** and **Cloud
+saves**. The D-pad moves between them (the focused one has a yellow border),
+A selects, START plays from anywhere. Quitting the game returns to the
+launcher, which uploads the session's save when cloud saves are on. After a
+crash it shows the tail of `android-runtime.log`; a normal quit shows nothing.

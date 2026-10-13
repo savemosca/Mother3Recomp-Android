@@ -147,6 +147,9 @@ int mother3_main(int argc, char** argv) {
 #if defined(MOTHER3_RETROACHIEVEMENTS)
     mother3::ra_shutdown();
 #endif
+    // Read by the Android launcher: without this line (a crash) or with a
+    // non-zero code it shows the log tail after the game closes.
+    std::fprintf(stderr, "mother3: session ended, exit code %d\n", result);
     return result;
 }
 

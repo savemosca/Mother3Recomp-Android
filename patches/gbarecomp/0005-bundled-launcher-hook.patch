@@ -1,0 +1,52 @@
+From e50f45da79c0c8d88670a3b82d622d5fcfbb3ed8 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 00:35:02 +0200
+Subject: [PATCH] Android setup: let games handle APKs with embedded assets
+
+GbaSetupActivity.onBundledAssets() replaces the hard-wired "start the game
+and finish" for APKs that carry the ROM/BIOS, so a game can show its own
+launcher (account settings, cloud saves) there. The default is unchanged.
+hasBundledPrivateAssets() becomes protected for the same reason.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../java/org/gbarecomp/GbaSetupActivity.java     | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/platform/android/java/org/gbarecomp/GbaSetupActivity.java b/platform/android/java/org/gbarecomp/GbaSetupActivity.java
+index 6309d91..4dea2f4 100644
+--- a/platform/android/java/org/gbarecomp/GbaSetupActivity.java
++++ b/platform/android/java/org/gbarecomp/GbaSetupActivity.java
+@@ -73,8 +73,7 @@ public class GbaSetupActivity extends Activity {
+         config = GbaGameConfig.load(this);
+         setRequestedOrientation(GbaGameActivity.orientationFor(config.orientation));
+         if (hasBundledPrivateAssets()) {
+-            startActivity(new Intent(this, gameActivityClass()));
+-            finish();
++            onBundledAssets();
+             return;
+         }
+         setContentView(buildContent());
+@@ -353,7 +352,18 @@ public class GbaSetupActivity extends Activity {
+             .getBoolean(SKIP_LAUNCHER_ON_BOOT, true);
+     }
+ 
+-    private boolean hasBundledPrivateAssets() {
++    /**
++     * An APK with an embedded ROM (and BIOS) has nothing to set up. By default
++     * the game starts at once and this screen closes; a game may override this
++     * to show its own launcher (it then owns the content view).
++     */
++    protected void onBundledAssets() {
++        startActivity(new Intent(this, gameActivityClass()));
++        finish();
++    }
++
++    /** True when this APK carries the verified ROM (and BIOS) as private assets. */
++    protected boolean hasBundledPrivateAssets() {
+         try (InputStream rom = getAssets().open("payload/roms/" + config.romFile)) {
+             if (rom.read() < 0) return false;
+         } catch (IOException ignored) {
+-- 
+2.56.0
+

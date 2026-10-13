@@ -19,9 +19,10 @@ Usage:
 --device rg556      Anbernic RG556 preset: ARMv8.2-A code scheduled for
                     Cortex-A76, lower audio latency, game thread on big cores.
 --generated-opt     Optimization level for the generated corpus (default -O1).
---no-embed          Keep the ROM and BIOS out of the APK. The app then opens
-                    its setup screen (import ROM/BIOS once, RetroAchievements
-                    login, PLAY); an embedded build skips that screen.
+--no-embed          Keep the ROM and BIOS out of the APK; the app then asks
+                    for them on first launch (verified by SHA-1). Embedded
+                    builds open a launcher with PLAY, RetroAchievements and
+                    cloud saves instead.
 
 This creates a PRIVATE Android build. The ROM/BIOS and generated recompilation
 corpus stay local and are never committed.
