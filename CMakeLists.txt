@@ -32,6 +32,35 @@ elseif(ANDROID AND NOT MOTHER3_ANDROID_TUNE STREQUAL "")
     message(FATAL_ERROR "Unknown MOTHER3_ANDROID_TUNE='${MOTHER3_ANDROID_TUNE}'. Use rg556 or leave empty.")
 endif()
 
+# RetroAchievements (softcore) for Android: rcheevos checked out at
+# third_party/rcheevos (tools/build-android.sh clones the pinned tag).
+set(RCHEEVOS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rcheevos"
+    CACHE PATH "Path to the rcheevos checkout")
+option(MOTHER3_RETROACHIEVEMENTS "Android: RetroAchievements support" ON)
+if(ANDROID AND MOTHER3_RETROACHIEVEMENTS)
+    if(EXISTS "${RCHEEVOS_ROOT}/include/rc_client.h")
+        file(GLOB RCHEEVOS_SOURCES CONFIGURE_DEPENDS
+            "${RCHEEVOS_ROOT}/src/rcheevos/*.c"
+            "${RCHEEVOS_ROOT}/src/rapi/*.c")
+        list(APPEND RCHEEVOS_SOURCES
+            "${RCHEEVOS_ROOT}/src/rc_client.c"
+            "${RCHEEVOS_ROOT}/src/rc_compat.c"
+            "${RCHEEVOS_ROOT}/src/rc_util.c"
+            "${RCHEEVOS_ROOT}/src/rc_version.c"
+            "${RCHEEVOS_ROOT}/src/rhash/md5.c")
+        add_library(rcheevos STATIC ${RCHEEVOS_SOURCES})
+        target_include_directories(rcheevos
+            PUBLIC "${RCHEEVOS_ROOT}/include" "${RCHEEVOS_ROOT}/src/rhash"
+            PRIVATE "${RCHEEVOS_ROOT}/src")
+        set_target_properties(rcheevos PROPERTIES
+            C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+    else()
+        message(WARNING "rcheevos not found at ${RCHEEVOS_ROOT}; "
+            "building without RetroAchievements.")
+        set(MOTHER3_RETROACHIEVEMENTS OFF)
+    endif()
+endif()
+
 if(NOT EXISTS "${GBARECOMP_ROOT}/CMakeLists.txt")
     message(FATAL_ERROR
         "GBARECOMP_ROOT does not point to a gbarecomp checkout:\n"
@@ -48,6 +77,12 @@ if(NOT ANDROID)
 endif()
 
 function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32 REGION)
+    # The setup screen imports the ROM as files/roms/<file> (gbaGame.romFile).
+    if(NAME STREQUAL "mother3en")
+        set(ROM_FILE "mother3_en.gba")
+    else()
+        set(ROM_FILE "mother3_jpn.gba")
+    endif()
     set(VARIANT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/variants/${NAME}")
 
     if(EXISTS "${VARIANT_DIR}/generated/recompiled.cpp")
@@ -125,6 +160,14 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
 
     if(ANDROID AND MOTHER3_ANDROID_TUNE STREQUAL "rg556")
         target_compile_definitions(${TARGET} PRIVATE MOTHER3_TUNE_RG556=1)
+    endif()
+
+    if(ANDROID AND MOTHER3_RETROACHIEVEMENTS)
+        target_sources(${TARGET} PRIVATE src/retroachievements.cpp)
+        target_link_libraries(${TARGET} PRIVATE rcheevos)
+        target_compile_definitions(${TARGET} PRIVATE
+            MOTHER3_RETROACHIEVEMENTS=1
+            MOTHER3_ROM_FILE="roms/${ROM_FILE}")
     endif()
 
     target_compile_definitions(${TARGET} PRIVATE

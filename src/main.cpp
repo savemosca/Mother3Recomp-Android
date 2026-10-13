@@ -39,6 +39,10 @@
 #include "game_launcher_boot.h"
 #endif
 
+#if defined(MOTHER3_RETROACHIEVEMENTS)
+#include "retroachievements.h"
+#endif
+
 namespace {
 
 void print_usage() {
@@ -131,10 +135,19 @@ int mother3_main(int argc, char** argv) {
     if (!on_mobile && game_launcher_preboot(args, opts)) return 0;
 #endif
 
+#if defined(MOTHER3_RETROACHIEVEMENTS)
+    // No-op unless the setup screen stored RetroAchievements credentials.
+    mother3::ra_install(opts, MOTHER3_ROM_FILE);
+#endif
+
     std::vector<char*> av;
     av.reserve(args.size());
     for (auto& arg : args) av.push_back(arg.data());
-    return gbarecomp::run_game(static_cast<int>(av.size()), av.data(), opts);
+    const int result = gbarecomp::run_game(static_cast<int>(av.size()), av.data(), opts);
+#if defined(MOTHER3_RETROACHIEVEMENTS)
+    mother3::ra_shutdown();
+#endif
+    return result;
 }
 
 }  // namespace

@@ -111,3 +111,8 @@ variants/*/generated.bak/
 # Android/Gradle local output
 android/.gradle/
 android/local.properties
+
+# Engine and UI checkouts managed by tools/build-android.sh (this tree pins
+# no submodule commits; the script clones, pins and patches them).
+/gbarecomp/
+/recomp-ui/

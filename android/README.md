@@ -35,3 +35,35 @@ The pad toggle in the corner still shows it.
 
 `--generated-opt -O2` compiles the generated corpus at -O2 instead of -O1;
 expect a much longer native build.
+
+## RetroAchievements
+
+[MOTHER 3 on RetroAchievements](https://retroachievements.org/game/677)
+works in **softcore** mode. RetroAchievements accepts hardcore unlocks only
+from approved emulators, and its standalone policy excludes recompilations,
+so this client never requests hardcore. Save states, suspend/resume and
+fast-forward stay available.
+
+1. Build with `--no-embed` so the app keeps its setup screen (an APK with an
+   embedded ROM/BIOS starts the game directly and has no login screen):
+
+   ```bash
+   tools/build-android.sh --device rg556 --no-embed \
+     --rom /path/to/mother3_en.gba --bios /path/to/gba_bios.bin
+   ```
+
+2. On the device, import the ROM and BIOS once, then tap
+   **RetroAchievements: log in**. The password is exchanged once for an API
+   token; only the user name and token are stored, in app-private
+   `retroachievements.ini`. The same button logs out.
+3. Press PLAY. A banner shows the set and your progress; unlocks appear as
+   banners (or Android toasts in builds without the overlay font stack).
+
+The game is identified by the MD5 of the whole ROM file, the RetroAchievements
+GBA method. If the banner says *ROM not recognized*, that MD5 is not linked
+to game 677: compare it with the game's supported hashes on the site.
+Achievements that read cartridge save memory are not supported (MOTHER 3
+uses flash, whose reads go through a command state machine).
+
+The build script clones rcheevos `v12.5.0` into `third_party/rcheevos`.
+Without it the build continues with RetroAchievements disabled.

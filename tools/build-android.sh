@@ -8,16 +8,20 @@ BIOS=""
 JOBS="2"
 DEVICE=""
 GENERATED_OPT=""
+EMBED=1
 
 usage() {
   cat <<'EOF'
 Usage:
   tools/build-android.sh --rom /path/to/mother3.gba --bios /path/to/gba_bios.bin [--variant en|jpn] [--jobs N]
-                         [--device rg556] [--generated-opt -O2]
+                         [--device rg556] [--generated-opt -O2] [--no-embed]
 
 --device rg556      Anbernic RG556 preset: ARMv8.2-A code scheduled for
                     Cortex-A76, lower audio latency, game thread on big cores.
 --generated-opt     Optimization level for the generated corpus (default -O1).
+--no-embed          Keep the ROM and BIOS out of the APK. The app then opens
+                    its setup screen (import ROM/BIOS once, RetroAchievements
+                    login, PLAY); an embedded build skips that screen.
 
 This creates a PRIVATE Android build. The ROM/BIOS and generated recompilation
 corpus stay local and are never committed.
@@ -32,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --jobs) JOBS="$2"; shift 2 ;;
     --device) DEVICE="$2"; shift 2 ;;
     --generated-opt) GENERATED_OPT="$2"; shift 2 ;;
+    --no-embed) EMBED=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -100,6 +105,12 @@ for sub in gbarecomp recomp-ui; do
     [[ "$sub" == gbarecomp ]] && git -C "$ROOT/gbarecomp" checkout -q "$GBARECOMP_REV"
   fi
 done
+# RetroAchievements runtime (third_party/ is ignored; pinned release tag).
+RCHEEVOS_TAG="v12.5.0"
+if [[ ! -f "$ROOT/third_party/rcheevos/include/rc_client.h" ]]; then
+  git clone --depth 1 --branch "$RCHEEVOS_TAG" \
+    https://github.com/RetroAchievements/rcheevos.git "$ROOT/third_party/rcheevos"
+fi
 # Local engine patches (patches/gbarecomp/*.patch), each applied once.
 for patch in "$ROOT"/patches/gbarecomp/*.patch; do
   [[ -f "$patch" ]] || continue
@@ -150,6 +161,11 @@ command -v gradle >/dev/null 2>&1 || {
   exit 5
 }
 
+EMBED_ARGS=()
+if [[ "$EMBED" == 1 ]]; then
+  EMBED_ARGS=(-PprivateRom="$ROM" -PprivateBios="$BIOS")
+fi
+
 echo "Building private Android APK..."
 (
   cd "$ROOT/android"
@@ -157,8 +173,7 @@ echo "Building private Android APK..."
     -Pmother3Variant="$VARIANT" \
     -PgbaAbis=arm64-v8a \
     -PgbaNativeJobs="$JOBS" \
-    -PprivateRom="$ROM" \
-    -PprivateBios="$BIOS" \
+    ${EMBED_ARGS[@]+"${EMBED_ARGS[@]}"} \
     ${DEVICE:+-Pmother3Device="$DEVICE"} \
     ${GENERATED_OPT:+-Pmother3GeneratedOpt="$GENERATED_OPT"}
 )
