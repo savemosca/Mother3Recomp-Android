@@ -1,4 +1,4 @@
-From d5e16ef7d876c736153b3f050bceec8f7e48145e Mon Sep 17 00:00:00 2001
+From 4ae9794ad90e7ffeec7bd6f01c8c8ab98259bcd0 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Tue, 13 Oct 2026 23:38:09 +0200
 Subject: [PATCH] Android handheld tuning: full-screen sharp scaling, audio
@@ -14,13 +14,13 @@ Subject: [PATCH] Android handheld tuning: full-screen sharp scaling, audio
   callback size and bridge cushion; defaults are unchanged. The chosen
   values are logged.
 - GBARECOMP_BIG_CORES=1 pins the Android game thread to the performance
-  cluster, derived from cpufreq.
+  cores, ranked by cpu_capacity (cpuinfo_max_freq when the kernel lacks it).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/runtime/host_window.cpp     | 107 ++++++++++++++++++++------------
- src/runtime/mobile_platform.cpp |  37 +++++++++++
- 2 files changed, 105 insertions(+), 39 deletions(-)
+ src/runtime/mobile_platform.cpp |  55 ++++++++++++++++
+ 2 files changed, 123 insertions(+), 39 deletions(-)
 
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
 index 742e98e..e1f8834 100644
@@ -190,10 +190,16 @@ index 742e98e..e1f8834 100644
              false;
  #endif
 diff --git a/src/runtime/mobile_platform.cpp b/src/runtime/mobile_platform.cpp
-index 176a73b..2577fbb 100644
+index 176a73b..661e864 100644
 --- a/src/runtime/mobile_platform.cpp
 +++ b/src/runtime/mobile_platform.cpp
-@@ -7,6 +7,7 @@
+@@ -2,11 +2,13 @@
+ 
+ #include "mobile_platform.h"
+ 
++#include <algorithm>
+ #include <cstdio>
+ #include <cstdlib>
  
  #if defined(__ANDROID__)
  #include <pthread.h>
@@ -201,43 +207,60 @@ index 176a73b..2577fbb 100644
  #include <unistd.h>
  
  #include <SDL.h>
-@@ -23,7 +24,43 @@ struct StackedCall {
+@@ -23,7 +25,60 @@ struct StackedCall {
      char** argv = nullptr;
      int result = 1;
  };
-+// GBARECOMP_BIG_CORES=1 keeps the game thread on the performance cluster
-+// (every CPU whose max frequency is at least 80% of the fastest one), so the
-+// scheduler cannot park the frame loop on a little core and drop frames while
-+// the governor ramps up. Read from cpufreq, so no SoC table is needed.
++// GBARECOMP_BIG_CORES=1 keeps the game thread on the performance cores, so
++// the scheduler cannot park the frame loop on a little core and drop frames
++// while the governor ramps up. A core counts as big when its scheduler
++// capacity (cpu_capacity: microarchitecture and clock) is at least 80% of the
++// strongest one. Clock alone is not enough: the Unisoc T820's Cortex-A55s run
++// at 81% of its fastest Cortex-A76 but have a third of its capacity. Kernels
++// without cpu_capacity fall back to cpuinfo_max_freq. No SoC table needed.
++long read_cpu_value(long cpu, const char* leaf) {
++    char path[96];
++    std::snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%ld/%s", cpu, leaf);
++    long value = 0;
++    if (std::FILE* f = std::fopen(path, "r")) {
++        if (std::fscanf(f, "%ld", &value) != 1) value = 0;
++        std::fclose(f);
++    }
++    return value;
++}
++
 +void pin_to_big_cores() {
 +    const char* env = std::getenv("GBARECOMP_BIG_CORES");
 +    if (!env || !*env || *env == '0') return;
-+    const long cpus = sysconf(_SC_NPROCESSORS_CONF);
-+    long freq[CPU_SETSIZE] = {};
-+    long top = 0;
-+    for (long cpu = 0; cpu < cpus && cpu < CPU_SETSIZE; ++cpu) {
-+        char path[96];
-+        std::snprintf(path, sizeof(path),
-+                      "/sys/devices/system/cpu/cpu%ld/cpufreq/cpuinfo_max_freq", cpu);
-+        if (std::FILE* f = std::fopen(path, "r")) {
-+            if (std::fscanf(f, "%ld", &freq[cpu]) != 1) freq[cpu] = 0;
-+            std::fclose(f);
++    const long cpus = std::min<long>(sysconf(_SC_NPROCESSORS_CONF), CPU_SETSIZE);
++    const char* leaves[] = {"cpu_capacity", "cpufreq/cpuinfo_max_freq"};
++    for (const char* leaf : leaves) {
++        long score[CPU_SETSIZE] = {};
++        long top = 0;
++        bool complete = cpus > 0;
++        for (long cpu = 0; cpu < cpus; ++cpu) {
++            score[cpu] = read_cpu_value(cpu, leaf);
++            if (score[cpu] <= 0) complete = false;
++            top = std::max(top, score[cpu]);
 +        }
-+        if (freq[cpu] > top) top = freq[cpu];
-+    }
-+    if (top <= 0) return;
-+    cpu_set_t set;
-+    CPU_ZERO(&set);
-+    int picked = 0;
-+    for (long cpu = 0; cpu < cpus && cpu < CPU_SETSIZE; ++cpu) {
-+        if (freq[cpu] * 5 >= top * 4) {
-+            CPU_SET(cpu, &set);
-+            ++picked;
++        // A partial read (offline cores) cannot rank the clusters reliably.
++        if (!complete || top <= 0) continue;
++        cpu_set_t set;
++        CPU_ZERO(&set);
++        int picked = 0;
++        for (long cpu = 0; cpu < cpus; ++cpu) {
++            if (score[cpu] * 5 >= top * 4) {
++                CPU_SET(cpu, &set);
++                ++picked;
++            }
 +        }
++        const bool ok = picked < cpus && sched_setaffinity(0, sizeof(set), &set) == 0;
++        std::fprintf(stderr, "mobile: game thread big-core affinity %s (%d of %ld cpus by %s)\n",
++                     ok ? "set" : (picked == cpus ? "unneeded" : "unavailable"), picked, cpus,
++                     leaf);
++        return;
 +    }
-+    const bool ok = picked > 0 && sched_setaffinity(0, sizeof(set), &set) == 0;
-+    std::fprintf(stderr, "mobile: game thread big-core affinity %s (%d cpus, max %ld kHz)\n",
-+                 ok ? "set" : "unavailable", picked, top);
++    std::fprintf(stderr, "mobile: game thread big-core affinity unavailable (no cpu topology)\n");
 +}
 +
  void* run_stacked(void* arg) {

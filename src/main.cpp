@@ -126,7 +126,9 @@ int mother3_main(int argc, char** argv) {
         opts.orientation = gbarecomp::RunOptions::Orientation::Landscape;
         opts.resume_suspend_state_on_launch = true;
         opts.ui_touch_friendly = true;
-        opts.touch_pad_default = 1;
+        // touch_pad_default stays unset: the engine shows the touch pad on
+        // phones and hides it when a controller is present (gaming handhelds
+        // such as the RG556), until the player toggles it.
     }
 
 #if defined(GBAGAME_RECOMP_UI)
