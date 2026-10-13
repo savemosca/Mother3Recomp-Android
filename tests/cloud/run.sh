@@ -31,7 +31,7 @@ curl -sf -b "$WORK/cj" -X POST http://localhost:18080/api/users -H "x-csrftoken:
 curl -sf -u admin:romm-test-pw-123 -X POST http://localhost:18080/api/tasks/scan \
   -H 'Content-Type: application/json' -d '{}' >/dev/null
 
-ZSTD=1.5.7-23
+ZSTD=1.5.7-12
 curl -sfL "https://repo1.maven.org/maven2/org/json/json/20250517/json-20250517.jar" -o "$WORK/json.jar"
 curl -sfL "https://repo1.maven.org/maven2/com/github/luben/zstd-jni/$ZSTD/zstd-jni-$ZSTD.jar" -o "$WORK/zstd.jar"
 mkdir "$WORK/out"

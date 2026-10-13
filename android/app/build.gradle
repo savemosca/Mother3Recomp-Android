@@ -77,7 +77,9 @@ apply from: new File(engineRoot, "platform/android/gbarecomp-app.gradle")
 
 dependencies {
     // Hoard serves cloud saves as tar.zst; zstd-jni ships the arm64 decoder.
-    implementation "com.github.luben:zstd-jni:1.5.7-23@aar"
+    // 1.5.7-12 is the newest AAR that compiles against SDK 35: later ones
+    // declare minCompileSdk=37, which AGP 8.10 (compileSdk 35) refuses.
+    implementation "com.github.luben:zstd-jni:1.5.7-12@aar"
 }
 
 android.sourceSets.main.manifest.srcFile file("src/main/AndroidManifest.xml")

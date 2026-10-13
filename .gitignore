@@ -116,3 +116,4 @@ android/local.properties
 # no submodule commits; the script clones, pins and patches them).
 /gbarecomp/
 /recomp-ui/
+android/app/.cxx/

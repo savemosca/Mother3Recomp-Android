@@ -97,13 +97,28 @@ ACTUAL_BIOS_SHA="$(sha1_file "$BIOS")"
 
 cd "$ROOT"
 # .gitmodules declares these, but this tree records no submodule commits, so
-# `git submodule update` alone fetches nothing. Clone what is missing; the
-# engine is pinned to the revision the local patches were written against.
+# `git submodule update` alone fetches nothing. Clone what is missing at the
+# pinned revisions (the engine one is what the local patches were written
+# against). An existing checkout must contain its pinned revision: it may
+# carry local commits on top (e.g. the patches committed), nothing older.
 GBARECOMP_REV="af47d28742a808291031d5af56f30f9f646366be"
+RECOMP_UI_REV="41c88ffea852b970af8d50312620b17404e455ad"
 for sub in gbarecomp recomp-ui; do
+  case "$sub" in
+    gbarecomp) rev="$GBARECOMP_REV" ;;
+    recomp-ui) rev="$RECOMP_UI_REV" ;;
+  esac
   if [[ -z "$(ls -A "$ROOT/$sub" 2>/dev/null)" ]]; then
     git clone "$(git config -f .gitmodules "submodule.$sub.url")" "$ROOT/$sub"
-    [[ "$sub" == gbarecomp ]] && git -C "$ROOT/gbarecomp" checkout -q "$GBARECOMP_REV"
+    git -C "$ROOT/$sub" checkout -q "$rev"
+  elif ! git -C "$ROOT/$sub" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    echo "$sub/ exists but is not a usable git checkout (interrupted clone?)." >&2
+    echo "Delete it and run this script again." >&2
+    exit 4
+  elif ! git -C "$ROOT/$sub" merge-base --is-ancestor "$rev" HEAD 2>/dev/null; then
+    echo "$sub/ is not based on the pinned revision $rev." >&2
+    echo "Check it out (git -C $sub checkout $rev) or delete $sub/ and run again." >&2
+    exit 4
   fi
 done
 # RetroAchievements runtime (third_party/ is ignored; pinned release tag).
@@ -112,16 +127,48 @@ if [[ ! -f "$ROOT/third_party/rcheevos/include/rc_client.h" ]]; then
   git clone --depth 1 --branch "$RCHEEVOS_TAG" \
     https://github.com/RetroAchievements/rcheevos.git "$ROOT/third_party/rcheevos"
 fi
-# Local engine patches (patches/gbarecomp/*.patch), each applied once.
-for patch in "$ROOT"/patches/gbarecomp/*.patch; do
-  [[ -f "$patch" ]] || continue
-  if git -C "$ROOT/gbarecomp" apply --reverse --check "$patch" 2>/dev/null; then
-    echo "Engine patch already applied: $(basename "$patch")"
-  else
-    git -C "$ROOT/gbarecomp" apply "$patch"
-    echo "Applied engine patch: $(basename "$patch")"
+# Local engine patches (patches/gbarecomp/*.patch), applied once as a series.
+# Later patches touch lines of earlier ones, so a patch cannot be checked on
+# its own: the series is replayed (reversed or forward) on a scratch index
+# holding the engine's current files, without touching the work tree.
+PATCHES=("$ROOT"/patches/gbarecomp/*.patch)
+series_replays() {  # series_replays forward|reverse
+  local index status=0 i
+  index="$(mktemp)"
+  if ! GIT_INDEX_FILE="$index" git -C "$ROOT/gbarecomp" read-tree HEAD ||
+     ! GIT_INDEX_FILE="$index" git -C "$ROOT/gbarecomp" add -u; then
+    rm -f "$index"
+    return 1
   fi
-done
+  if [[ "$1" == reverse ]]; then
+    for ((i = ${#PATCHES[@]} - 1; i >= 0; i--)); do
+      GIT_INDEX_FILE="$index" git -C "$ROOT/gbarecomp" apply --cached --reverse \
+        "${PATCHES[$i]}" 2>/dev/null || { status=1; break; }
+    done
+  else
+    for ((i = 0; i < ${#PATCHES[@]}; i++)); do
+      GIT_INDEX_FILE="$index" git -C "$ROOT/gbarecomp" apply --cached \
+        "${PATCHES[$i]}" 2>/dev/null || { status=1; break; }
+    done
+  fi
+  rm -f "$index"
+  return "$status"
+}
+if [[ -f "${PATCHES[0]}" ]]; then
+  if series_replays reverse; then
+    echo "Engine patches already applied (${#PATCHES[@]})."
+  elif series_replays forward; then
+    for patch in "${PATCHES[@]}"; do
+      git -C "$ROOT/gbarecomp" apply "$patch"
+      echo "Applied engine patch: $(basename "$patch")"
+    done
+  else
+    echo "The engine patches neither apply to gbarecomp/ nor are all applied there" >&2
+    echo "(partly applied, or the engine files were edited). Restore it with" >&2
+    echo "git -C gbarecomp checkout $GBARECOMP_REV -- . and run this script again." >&2
+    exit 4
+  fi
+fi
 git -C gbarecomp config submodule.external/arm-recomp-core.url \
   https://github.com/mstan/arm-recomp-core.git
 git -C gbarecomp submodule update --init \

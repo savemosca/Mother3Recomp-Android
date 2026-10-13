@@ -14,7 +14,7 @@ services:
       timeout: 5s
       retries: 20
   romm:
-    image: rommapp/romm:latest
+    image: rommapp/romm:5.4.0
     environment:
       DB_HOST: romm-db
       DB_NAME: romm
@@ -32,7 +32,7 @@ services:
       romm-db:
         condition: service_healthy
   hoard:
-    image: ghcr.io/rleeon/hoard:latest
+    image: ghcr.io/rleeon/hoard:1.2.2
     environment:
       HOARD__LOGGING__FORMAT: pretty
       HOARD_ADMIN_USERNAME: tester
