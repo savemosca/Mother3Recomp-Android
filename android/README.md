@@ -104,7 +104,10 @@ screen. It compares the device's save, the cloud's newest save and the
 version both last agreed on: the side that changed is copied over the other,
 and if both changed the player chooses. A replaced local save is first
 copied to `files/save-backups/` (10 kept). A failed sync never blocks
-playing. Nothing is synced while the game is running.
+playing. Nothing is synced while the game is running. After a download the
+game starts from the new save rather than resuming a suspended session
+(a suspend state carries the old cartridge save). Loading an older manual
+save state also restores that state's save, as in any emulator.
 
 Plain `http://` addresses are allowed for home servers; tokens then travel
 unencrypted on that network.

@@ -31,6 +31,8 @@ public final class CloudSaves {
     private final Activity activity;
     private final SharedPreferences prefs;
     private final File saveFile;
+    /** gbarecomp's "resume where you left off" marker for the suspend state. */
+    private final File suspendMarker;
     private final File backupDir;
     private final String romSha1;
     private final Runnable onChanged;
@@ -41,6 +43,7 @@ public final class CloudSaves {
         String stem = romFile.contains(".") ? romFile.substring(0, romFile.lastIndexOf('.')) : romFile;
         // gbarecomp writes the save next to the ROM, as <rom>.sav.
         this.saveFile = new File(activity.getFilesDir(), "roms/" + stem + ".sav");
+        this.suspendMarker = new File(activity.getFilesDir(), "roms/" + stem + ".suspend.pending");
         this.backupDir = new File(activity.getFilesDir(), "save-backups");
         this.romSha1 = romSha1;
         this.onChanged = onChanged;
@@ -93,6 +96,11 @@ public final class CloudSaves {
             String error = null;
             try {
                 result = new SaveSync(provider, saveFile, backupDir, store()).sync(choice);
+                if (result.outcome == SaveSync.Outcome.DOWNLOADED) {
+                    // A suspend state embeds the old cartridge save: resuming it
+                    // would put the replaced save back. Boot from the new one.
+                    suspendMarker.delete();
+                }
                 cacheIds(provider);
             } catch (IOException failure) {
                 error = failure.getMessage();
