@@ -8,6 +8,7 @@ the evidence, and open questions. Unverified claims are marked as hypotheses.
 |---|---|---|
 | [combo.md](combo.md) | Battle rhythm combos, hit-window check, latency offset | Hit check located; units unknown |
 | widescreen.md | Overworld camera, map/tilemap, object culling | Not started |
+| [android-thumb-return-crash.md](android-thumb-return-crash.md) | Android crash: return to Thumb code in ARM state (0x08010832); pixel glitches | Open: evidence collected, root cause unknown |
 
 ## Workflow
 re-scout (find, write note) → decomp-matcher (optional: readable source in the fork)
