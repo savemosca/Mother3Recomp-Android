@@ -232,6 +232,8 @@ public final class HoardProvider implements CloudProvider {
 
     /** Reads one regular file out of a ustar/GNU/PAX tar stream. */
     static final class Tar {
+        private static final long MAX_ENTRY_BYTES = 64L * 1024 * 1024;
+
         private Tar() {}
 
         static byte[] extract(InputStream in, String wantedName) throws IOException {
@@ -243,9 +245,13 @@ public final class HoardProvider implements CloudProvider {
                 longName = null;
                 long size = parseOctal(header, 124, 12);
                 byte type = header[156];
-                byte[] data = (type == 'L' || type == 'x' || type == '0' || type == 0)
-                    && size <= 64L * 1024 * 1024 ? readData(in, size) : null;
-                if (data == null) skip(in, padded(size));
+                boolean wanted = type == 'L' || type == 'x' || type == '0' || type == 0;
+                if (!wanted || size > MAX_ENTRY_BYTES) {
+                    // Other entry types, and anything far larger than a save.
+                    skip(in, padded(size));
+                    continue;
+                }
+                byte[] data = readData(in, size);
                 if (type == 'L') {
                     longName = cString(data, 0, data.length);
                 } else if (type == 'x') {

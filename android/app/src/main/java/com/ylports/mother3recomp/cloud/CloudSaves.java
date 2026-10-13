@@ -27,6 +27,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class CloudSaves {
     private static final String PREFS = "cloud_saves";
     private static final String CLIENT_VERSION = "0.1.3";
+    /** Set while a game started from PLAY has not been synced back yet. */
+    private static final String PLAYED = "played_since_sync";
+
+    /** A sync in flight; {@link #then} runs once it (and any conflict choice) ends. */
+    private static final class Job {
+        Runnable then;
+    }
+
+    /**
+     * The sync in flight, process-wide so a recreated setup screen sees it
+     * too (UI thread only). Two syncs at once could write the save file under
+     * a starting game, or turn one upload into a false Hoard conflict.
+     */
+    private static Job running;
 
     private final Activity activity;
     private final SharedPreferences prefs;
@@ -63,27 +77,62 @@ public final class CloudSaves {
 
     // ── Sync around a play session ──────────────────────────────────────────
 
-    /** Syncs, then runs {@code then} whatever happened (including failures). */
+    /**
+     * Syncs, then runs {@code then} whatever happened (including failures).
+     * While another sync is running, {@code then} waits for that one instead:
+     * it brings the save up to date just the same.
+     */
     public void syncBeforePlay(Runnable then) {
-        if (!configured()) {
+        if (running == null && !configured()) {
             then.run();
             return;
         }
         runSync(SaveSync.Choice.AUTO, true, then);
     }
 
+    /**
+     * Remembers that PLAY started the game, so its progress is uploaded when
+     * the player comes back, even if this screen (or the process) was
+     * recreated meanwhile. Committed at once: the game may not let us return.
+     */
+    public void gameStarting() {
+        prefs.edit().putBoolean(PLAYED, true).commit();
+    }
+
     /** Uploads the session's progress after the game exits. */
     public void syncAfterPlay() {
+        // Kept for a later return while the game still runs or a sync is busy.
+        if (!prefs.getBoolean(PLAYED, false) || SdlSession.nativeRunning() || running != null) {
+            return;
+        }
+        prefs.edit().remove(PLAYED).apply();
         if (configured()) runSync(SaveSync.Choice.AUTO, false, null);
     }
 
     private void runSync(SaveSync.Choice choice, boolean showProgress, Runnable then) {
+        if (running != null) {
+            if (then != null && running.then == null) {
+                running.then = then;
+                toast("Waiting for the cloud sync to finish…");
+            } else if (then == null && showProgress) {
+                toast("A cloud sync is already running.");
+            }
+            // A second PLAY while the first one waits is dropped.
+            return;
+        }
         if (SdlSession.nativeRunning()) {
             toast("Cloud sync skipped: the game is still running.");
             if (then != null) then.run();
             return;
         }
         CloudProvider provider = provider();
+        if (provider == null) {
+            if (then != null) then.run();
+            return;
+        }
+        Job job = new Job();
+        job.then = then;
+        running = job;
         AlertDialog progress = showProgress
             ? new AlertDialog.Builder(activity)
                 .setTitle("Cloud saves")
@@ -102,25 +151,32 @@ public final class CloudSaves {
                     suspendMarker.delete();
                 }
                 cacheIds(provider);
-            } catch (IOException failure) {
-                error = failure.getMessage();
+            } catch (IOException | RuntimeException failure) {
+                error = describe(failure);
             }
             final SaveSync.Result done = result;
             final String failure = error;
             activity.runOnUiThread(() -> {
-                if (progress != null) progress.dismiss();
+                running = null;
+                // Read now: PLAY may have attached itself while this ran.
+                Runnable next = job.then;
+                record(failure != null ? "Failed: " + failure : done.message);
+                if (!alive()) {
+                    // No window left to report on or ask in; never block playing.
+                    if (next != null) next.run();
+                    return;
+                }
+                if (progress != null && progress.isShowing()) progress.dismiss();
                 if (failure != null) {
-                    record("Failed: " + failure);
                     toast("Cloud sync failed: " + failure);
-                    if (then != null) then.run();
+                    if (next != null) next.run();
                 } else if (done.outcome == SaveSync.Outcome.CONFLICT) {
-                    askConflict(done.message, then);
+                    askConflict(done.message, next);
                 } else {
-                    record(done.message);
-                    if (showProgress || done.outcome != SaveSync.Outcome.IN_SYNC) {
+                    if (progress != null || done.outcome != SaveSync.Outcome.IN_SYNC) {
                         toast(done.message);
                     }
-                    if (then != null) then.run();
+                    if (next != null) next.run();
                 }
             });
         }, "cloud-sync").start();
@@ -129,8 +185,8 @@ public final class CloudSaves {
     private void askConflict(String message, Runnable then) {
         new AlertDialog.Builder(activity)
             .setTitle("Cloud saves: choose a save")
-            .setMessage(message + "\n\nThe save that is replaced on this device is kept in "
-                + "save-backups.")
+            .setMessage(message + "\n\nWhichever save is replaced, on this device or in the "
+                + "cloud, is first copied to save-backups.")
             .setCancelable(false)
             .setPositiveButton("Keep this device's",
                 (d, w) -> runSync(SaveSync.Choice.KEEP_DEVICE, true, then))
@@ -146,6 +202,11 @@ public final class CloudSaves {
     // ── Settings dialog ──────────────────────────────────────────────────────
 
     public void showSettings() {
+        if (running != null) {
+            // Switching or disconnecting now would race the sync's bookkeeping.
+            toast("A cloud sync is running; try again in a moment.");
+            return;
+        }
         if (!configured()) {
             new AlertDialog.Builder(activity)
                 .setTitle("Cloud saves")
@@ -250,8 +311,8 @@ public final class CloudSaves {
                     configure("romm", base, approved.token, "device " + approved.deviceId,
                         approved.deviceId, romId);
                 }
-            } catch (IOException failure) {
-                error = failure.getMessage();
+            } catch (IOException | RuntimeException failure) {
+                error = describe(failure);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 return;
@@ -259,7 +320,8 @@ public final class CloudSaves {
             final String failure = error;
             final boolean paired = approved != null && failure == null;
             activity.runOnUiThread(() -> {
-                waiting.dismiss();
+                if (!alive()) return;
+                if (waiting.isShowing()) waiting.dismiss();
                 if (failure != null) showError("RomM", failure);
                 if (paired) {
                     toast("Paired with RomM.");
@@ -282,6 +344,8 @@ public final class CloudSaves {
             | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         TextView status = note(form, "Signing in with a password creates a device token "
             + "(admin accounts). The password is not stored.");
+        // The http address the player already agreed to send a password to.
+        String[] cleartextConfirmed = {null};
         AlertDialog dialog = new AlertDialog.Builder(activity)
             .setTitle("Hoard (self-hosted)")
             .setView(form)
@@ -304,6 +368,14 @@ public final class CloudSaves {
                     status.setText("Enter username and password, or a device token.");
                     return;
                 }
+                if (pasted.isEmpty() && base.startsWith("http://")
+                        && !base.equals(cleartextConfirmed[0])) {
+                    cleartextConfirmed[0] = base;
+                    status.setText("This address is http: the password would be sent "
+                        + "unencrypted. Use it only on your home network. Tap Sign in again "
+                        + "to continue, or use https or a device token.");
+                    return;
+                }
                 status.setText("Signing in…");
                 background(() -> {
                         String deviceToken = !pasted.isEmpty() ? pasted
@@ -317,7 +389,8 @@ public final class CloudSaves {
                         dialog.dismiss();
                         prefs.edit().putString("last_hoard_url", base).apply();
                         configure("hoard", base, signedIn[0], signedIn[1], null, null);
-                        toast("Signed in to Hoard as " + signedIn[1] + "." + cleartextWarning(base));
+                        toast("Signed in to Hoard as " + signedIn[1] + "."
+                            + (pasted.isEmpty() ? "" : cleartextWarning(base)));
                         runSync(SaveSync.Choice.AUTO, true, null);
                     },
                     status::setText);
@@ -442,11 +515,29 @@ public final class CloudSaves {
         new Thread(() -> {
             try {
                 T value = work.run();
-                activity.runOnUiThread(() -> done.accept(value));
-            } catch (IOException error) {
-                activity.runOnUiThread(() -> failed.accept(error.getMessage()));
+                activity.runOnUiThread(() -> {
+                    if (alive()) done.accept(value);
+                });
+            } catch (IOException | RuntimeException error) {
+                String message = describe(error);
+                activity.runOnUiThread(() -> {
+                    if (alive()) failed.accept(message);
+                });
             }
         }, "cloud-setup").start();
+    }
+
+    /** False once the screen is gone: its dialogs can no longer be shown. */
+    private boolean alive() {
+        return !activity.isFinishing() && !activity.isDestroyed();
+    }
+
+    /** A message for the player; unexpected exceptions get a generic one. */
+    public static String describe(Exception error) {
+        String message = error.getMessage();
+        if (error instanceof IOException && message != null && !message.isEmpty()) return message;
+        return "Unexpected error (" + error.getClass().getSimpleName()
+            + (message != null ? ": " + message : "") + ")";
     }
 
     private LinearLayout form() {

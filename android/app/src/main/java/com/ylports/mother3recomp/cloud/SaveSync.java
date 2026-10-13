@@ -17,8 +17,8 @@ import java.util.Locale;
  * The store remembers the content hash both sides agreed on at the last
  * successful sync (the "base"). Only the side that moved away from the base
  * is copied over the other; when both moved (or there is no base and they
- * differ), the player chooses. Every overwritten local save is kept in the
- * backup folder first.
+ * differ), the player chooses. Every overwritten local save, and a cloud save
+ * the player chose to overwrite, is kept in the backup folder first.
  */
 public final class SaveSync {
     /** MOTHER 3 uses 512 Kbit flash. */
@@ -127,6 +127,13 @@ public final class SaveSync {
         }
 
         if (push) {
+            if (remote != null && choice == Choice.KEEP_DEVICE) {
+                // The player chose to replace a cloud save this device never
+                // had. RomM keeps no history of it, so keep a copy here, as
+                // for a replaced local save.
+                if (remoteData == null) remoteData = provider.download(remote);
+                backup(remoteData, "cloud-before-upload");
+            }
             try {
                 CloudProvider.RemoteSave uploaded = provider.upload(local, remote);
                 store.put(key, uploaded.hash != null ? uploaded.hash : localHash);

@@ -70,6 +70,7 @@ Partial progress (hit counts, a challenge in progress) is stored beside each
 save state and the suspend state as `<state>.ra`, so it survives the app
 being closed in the background and follows manual state loads. Loading a
 state without that file resets partial progress instead of mixing moments.
+Rewind keeps the live progress (its in-memory states carry none).
 
 The build script clones rcheevos `v12.5.0` into `third_party/rcheevos`.
 Without it the build continues with RetroAchievements disabled.
@@ -94,9 +95,14 @@ The **Cloud saves** button (launcher or setup screen) keeps the save file
 Sync runs when PLAY is pressed and when the game exits back to the setup
 screen. It compares the device's save, the cloud's newest save and the
 version both last agreed on: the side that changed is copied over the other,
-and if both changed the player chooses. A replaced local save is first
-copied to `files/save-backups/` (10 kept). A failed sync never blocks
-playing. Nothing is synced while the game is running. After a download the
+and if both changed the player chooses. A replaced local save, and a cloud
+save the player chose to overwrite with this device's, is first copied to
+`files/save-backups/` (10 kept). A failed sync never blocks playing. One sync
+runs at a time: PLAY pressed during the after-game sync waits for it. Nothing
+is synced while the game is running. Server redirects are not followed (the
+token stays with the address you entered); the error names the address to use
+instead. Signing in to Hoard with a password over plain `http` asks for a
+second tap first. After a download the
 game starts from the new save rather than resuming a suspended session
 (a suspend state carries the old cartridge save). Loading an older manual
 save state also restores that state's save, as in any emulator.

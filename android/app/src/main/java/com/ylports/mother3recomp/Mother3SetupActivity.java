@@ -54,8 +54,6 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     /** The APK embeds the ROM/BIOS: this screen is the launcher. */
     private boolean launcherMode;
     private Button playButton;
-    /** Set when PLAY started the game; the next resume uploads its progress. */
-    private boolean gameLaunched;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -102,7 +100,9 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             return;
         }
         cloudSaves.syncBeforePlay(() -> {
-            gameLaunched = true;
+            // A sync can outlive this screen; a newer one handles PLAY then.
+            if (isDestroyed()) return;
+            cloudSaves.gameStarting();
             Mother3SetupActivity.super.startActivity(intent);
         });
     }
@@ -311,12 +311,13 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
                         String[] credentials = RaBridge.login(name, password);
                         RaBridge.saveCredentials(getFilesDir(), credentials[0], credentials[1]);
                         loggedIn = credentials[0];
-                    } catch (IOException failure) {
-                        error = failure.getMessage();
+                    } catch (IOException | RuntimeException failure) {
+                        error = CloudSaves.describe(failure);
                     }
                     final String message = error;
                     final String account = loggedIn;
                     runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
                         if (message == null) {
                             dialog.dismiss();
                             refreshRetroAchievementsButton();
@@ -344,10 +345,8 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
         super.onResume();
         showNativeLogIfChanged();
-        if (gameLaunched) {
-            gameLaunched = false;
-            cloudSaves.syncAfterPlay();
-        }
+        // Only after a game started from PLAY (remembered across recreation).
+        cloudSaves.syncAfterPlay();
     }
 
     private void showNativeLogIfChanged() {

@@ -117,6 +117,14 @@ final class CloudHttp {
                 }
             }
             int status = connection.getResponseCode();
+            String location = connection.getHeaderField("Location");
+            if (status >= 300 && status < 400 && location != null) {
+                // Not followed: the token must not travel to another address
+                // (or downgrade to http) behind the player's back.
+                URL target = new URL(new URL(url), location);
+                throw new IOException("The server redirects to " + target.getProtocol() + "://"
+                    + target.getAuthority() + "; use that address in the cloud save settings.");
+            }
             InputStream input = status >= 400 ? connection.getErrorStream()
                                               : connection.getInputStream();
             byte[] data = input != null ? readAll(input) : new byte[0];

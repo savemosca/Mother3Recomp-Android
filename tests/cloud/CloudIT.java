@@ -88,6 +88,10 @@ public final class CloudIT {
         check(r.outcome == SaveSync.Outcome.CONFLICT, "both changed again -> " + r.outcome);
         r = sync.sync(SaveSync.Choice.KEEP_DEVICE);
         check(r.outcome == SaveSync.Outcome.UPLOADED, "KEEP_DEVICE uploads -> " + r.outcome);
+        File[] cloudCopies = backups.listFiles((d, n) -> n.endsWith(".cloud-before-upload.bak"));
+        check(cloudCopies != null && cloudCopies.length == 1
+            && Arrays.equals(SaveSync.readFile(cloudCopies[0]), save(7, SaveSync.FLASH_SIZE)),
+            "replaced cloud save backed up");
         check(Arrays.equals(other.download(other.latest()), l6), "cloud now holds this device's save");
         r = sync.sync(SaveSync.Choice.AUTO);
         check(r.outcome == SaveSync.Outcome.IN_SYNC, "then in sync -> " + r.outcome);

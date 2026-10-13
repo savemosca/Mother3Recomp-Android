@@ -362,7 +362,10 @@ void RC_CCONV on_event(const rc_client_event_t* event, rc_client_t* client) {
                event->server_error->error_message ? event->server_error->error_message : "");
         break;
     case RC_CLIENT_EVENT_DISCONNECTED:
-        notice("RetroAchievements offline", "Unlocks will be sent when the connection returns");
+        // rc_client queues unlocks in memory only: quitting before the
+        // connection returns loses them, so say so.
+        notice("RetroAchievements offline",
+               "Unlocks are sent when the connection returns; keep the game open until then");
         break;
     case RC_CLIENT_EVENT_RECONNECTED:
         notice("RetroAchievements online", "Pending unlocks sent");
@@ -542,8 +545,11 @@ void ra_savestate_written(const char* path) {
 }
 
 void ra_savestate_loaded(const char* path) {
+    // Rewind loads in-memory states (path == nullptr) that carry no progress;
+    // keep the live counts instead of resetting them a second back in time.
+    if (!path) return;
     std::vector<std::uint8_t> data;
-    if (path) {
+    {
         std::ifstream in(progress_path(path), std::ios::binary);
         data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
