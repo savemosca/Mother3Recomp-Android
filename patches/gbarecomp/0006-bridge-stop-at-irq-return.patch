@@ -1,33 +1,51 @@
-From 26e1b45bf2ad09673a28aea34205629d293ee8f1 Mon Sep 17 00:00:00 2001
+From 2c6e70fc9aa4456f4da0bc2320431d3ef24e7ad7 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 19:57:12 +0200
 Subject: [PATCH] Self-heal bridge: stop an IRQ continuation at its own iret
 
 runtime_irq() is entered from the interrupted code's runtime_tick and
 returns into it, so the interrupted instruction resumes natively. When
-the IRQ handler's return path is bridged (the BIOS IRQ wrapper tail at
-0x138 is not in the BIOS corpus), the bridge interpreted past the iret
-until the next static entry. The BIOS table lists function entries only,
-so an IRQ taken inside the SWI handler ran 0x164-0x16C (push {r2, lr},
-add lr, bx r12) in the bridge and again natively: the System stack lost
-8 bytes and the caller's LR became 0x170. A later return then landed in
-ARM state inside Thumb code or at the reset vector, and the bridge
-aborted on an Undefined instruction (MOTHER 3 EN on Android, after
-naming the characters: Div/LZ77UnCompVram SWIs interrupted by VCount).
+the IRQ return itself is bridged, the bridge (IRQ-continuation mode)
+executed the interpreted `subs pc, lr, #4` and kept interpreting the
+interrupted code until the next static entry, and the native code then
+ran those instructions again.
 
-Stop the IRQ continuation as soon as the interpreted exception return
-from IRQ mode matches this IRQ's nesting depth.
+For cartridge code the next static entry is the interrupted PC (interior
+dispatch entries), so nothing went wrong. The BIOS table lists function
+entries only: with a BIOS corpus that lacks the IRQ wrapper tail at 0x138
+(generated with `gba_recompile --bios` and no --config), an IRQ taken at
+0x164 inside the SWI handler ran `push {r2, lr}`, `add lr, pc, #0` and
+`bx r12` in the bridge and again natively. The System stack lost 8 bytes
+and the caller's LR became 0x170; a later return entered Thumb code in
+ARM state or reached the reset vector, and the bridge aborted on an
+Undefined instruction. IRQs inside CpuSet/CpuFastSet/LZ77 loops finished
+the routine in the bridge and then repeated its tail natively, writing
+wrong data to VRAM. Seen in MOTHER 3 (EN) on Android, confirmed with the
+runtime trace; with the fix the abort and the glitches are gone.
+
+Stop the continuation as soon as the interpreted exception return from
+IRQ mode matches this IRQ's nesting depth. Resumable contexts are left
+as they were: there runtime_irq() returns at once and the dispatcher
+resumes by PC, so no native frame is waiting.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/runtime/runtime_arm_default_aborts.cpp | 16 ++++++++++++++++
- 1 file changed, 16 insertions(+)
+ src/runtime/runtime_arm_default_aborts.cpp | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
 
 diff --git a/src/runtime/runtime_arm_default_aborts.cpp b/src/runtime/runtime_arm_default_aborts.cpp
-index 2563d4d..86e0d2b 100644
+index 4b16bf4..06a70e5 100644
 --- a/src/runtime/runtime_arm_default_aborts.cpp
 +++ b/src/runtime/runtime_arm_default_aborts.cpp
-@@ -423,6 +423,7 @@ extern "C" const char* g_tick_ctx;
+@@ -26,6 +26,7 @@
+ // and supply their own versions that record state for the diff runner.
+ 
+ #include "runtime_arm.h"
++#include "runtime_context.h"
+ #include "mod_function_hooks.h"
+ #include "symbol_lookup.h"
+ #include "self_heal.h"
+@@ -423,6 +424,7 @@ extern "C" const char* g_tick_ctx;
  // runtime_irq() (g_call_return_floor): the floor keeps the cancel cascade from
  // corrupting mainline frames; this keeps the self-heal bridge from bailing early.
  extern "C" uint32_t g_irq_nest_depth;
@@ -35,7 +53,7 @@ index 2563d4d..86e0d2b 100644
  
  // runtime_bridge_interpret — the interpret-the-missed-subtree core, factored out
  // of runtime_dispatch_miss so the P6 sljit differential gate can reuse it as its
-@@ -624,6 +625,21 @@ extern "C" int runtime_bridge_interpret(uint32_t entry_pc, bool entry_thumb,
+@@ -624,6 +626,24 @@ extern "C" int runtime_bridge_interpret(uint32_t entry_pc, bool entry_thumb,
  
          if (!irq_cont && (cpu.R[15] & ~1u) == stop_pc) break;
  
@@ -49,8 +67,11 @@ index 2563d4d..86e0d2b 100644
 +        // and the native handler then pushed again (System SP off by 8, LR
 +        // 0x170 as the caller's LR: a later return lands in ARM state inside
 +        // Thumb code, or at the reset vector).
++        // (A resumable context has no native frame waiting: runtime_irq()
++        // returned at once and the outer dispatcher resumes by PC.)
 +        if (irq_cont && r == armv4t::Interpreter::Result::ExceptionReturn &&
-+            old_mode == 0x12u && g_irq_iret_depth == g_irq_nest_depth) {
++            old_mode == 0x12u && g_irq_iret_depth == g_irq_nest_depth &&
++            !gbarecomp::runtime_has_resumable_context()) {
 +            break;
 +        }
 +

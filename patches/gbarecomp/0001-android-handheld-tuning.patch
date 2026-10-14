@@ -1,4 +1,4 @@
-From 4ae9794ad90e7ffeec7bd6f01c8c8ab98259bcd0 Mon Sep 17 00:00:00 2001
+From a8eaecb9e95d2d8033ef443f97f948143cdbda7e Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Tue, 13 Oct 2026 23:38:09 +0200
 Subject: [PATCH] Android handheld tuning: full-screen sharp scaling, audio
@@ -23,7 +23,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 123 insertions(+), 39 deletions(-)
 
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index 742e98e..e1f8834 100644
+index 712c1bb..4a0834a 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
 @@ -528,6 +528,38 @@ bool ensure_sharp_texture(Backend* b, int factor) {
@@ -98,7 +98,7 @@ index 742e98e..e1f8834 100644
          layout = compute_adaptive_presentation_layout(drawable_w, drawable_h,
                                                        b->base_w, b->base_h);
      } else {
-@@ -1873,7 +1920,8 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+@@ -1874,7 +1921,8 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
      want.freq     = 65536;
      want.format   = AUDIO_S16SYS;
      want.channels = 1;
@@ -108,7 +108,7 @@ index 742e98e..e1f8834 100644
      const char* direct_audio_env = std::getenv("GBARECOMP_AUDIO_DIRECT");
      b->audio_direct =
          direct_audio_env && *direct_audio_env && *direct_audio_env != '0';
-@@ -1921,10 +1969,20 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+@@ -1922,10 +1970,20 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
              cfg.channels    = 1;
              cfg.source_rate = 65536.0;                 // engine's standardized GBA mixer rate
              cfg.host_rate   = static_cast<double>(got.freq);
@@ -132,7 +132,7 @@ index 742e98e..e1f8834 100644
              SDL_PauseAudioDevice(b->audio_dev, 0);      // start the callback
          }
      }
-@@ -2255,43 +2313,12 @@ void HostWindow::present(const uint8_t* rgb888) {
+@@ -2263,43 +2321,12 @@ void HostWindow::present(const uint8_t* rgb888) {
      }
      if (touch_input_enabled(b)) publish_touch_presentation(b);
  #if defined(__ANDROID__)
@@ -178,7 +178,7 @@ index 742e98e..e1f8834 100644
      }
  #endif
      render_host_layers(b);
-@@ -2520,7 +2547,9 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
+@@ -2528,7 +2555,9 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
      if (!b->pad_choice_saved) {
          const bool platform_default =
  #if defined(__ANDROID__)

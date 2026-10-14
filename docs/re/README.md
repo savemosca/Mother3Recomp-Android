@@ -8,7 +8,7 @@ the evidence, and open questions. Unverified claims are marked as hypotheses.
 |---|---|---|
 | [combo.md](combo.md) | Battle rhythm combos, hit-window check, latency offset | Hit check located; units unknown |
 | widescreen.md | Overworld camera, map/tilemap, object culling | Not started |
-| [android-thumb-return-crash.md](android-thumb-return-crash.md) | Android crash: return to Thumb code in ARM state (0x08010832); pixel glitches; FLASH512 "unable to save" | Resolved: engine patches 0006/0007, BIOS config in build-android.sh |
+| [android-thumb-return-crash.md](android-thumb-return-crash.md) | Android crash: return to Thumb code in ARM state (0x08010832); pixel glitches; FLASH512 "unable to save" | Resolved: engine patch 0006 (upstream PR mstan/gbarecomp#44), BIOS config in build-android.sh; flash ID fixed upstream |
 
 ## Workflow
 re-scout (find, write note) → decomp-matcher (optional: readable source in the fork)

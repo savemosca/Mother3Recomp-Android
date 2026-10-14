@@ -1,4 +1,4 @@
-From e50f45da79c0c8d88670a3b82d622d5fcfbb3ed8 Mon Sep 17 00:00:00 2001
+From 45f59a92bd4d844ca02a5be0a4103c95ff441c6e Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 00:35:02 +0200
 Subject: [PATCH] Android setup: let games handle APKs with embedded assets

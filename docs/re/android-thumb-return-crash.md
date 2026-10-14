@@ -115,6 +115,17 @@ MX29L010. The ID is re-derived when a savestate loads, so suspend states from
 older builds save too. Verified on the RG556: the save succeeded and
 `roms/mother3_en.sav` (64 KB) was written. `bus_tests` covers both sizes.
 
+## Engine moved to mstan/gbarecomp (2026-10-14)
+
+`agray0425/gbarecomp` was a fork of `mstan/gbarecomp` 98 commits behind it.
+The fork now pins `mstan/gbarecomp@5e89943` with patches 0001-0006 rebased:
+0004 was ported by hand (new web-host lines around the savestate lambdas),
+0006 is the version proposed upstream as mstan/gbarecomp#44 (it leaves
+mstan's resumable multiplayer context alone), and 0007 was dropped because
+mstan fixed the flash ID in #28 (Macronix MX29L512, C2/1C, also in MOTHER 3's
+table). Engine tests: 50/50 on macOS. On the RG556 the new build resumed a
+suspend state written by the old engine and runs cleanly.
+
 ## How to collect data from the RG556
 
 adb is authorised and `su` works (GammaOS userdebug):

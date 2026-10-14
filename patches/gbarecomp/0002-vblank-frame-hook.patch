@@ -1,4 +1,4 @@
-From 16c420c6aaad8ea43d88630a63e69d7241846e9b Mon Sep 17 00:00:00 2001
+From f7ab94587994a2a6b58a8e4beacc3aa5c61b6a41 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Tue, 13 Oct 2026 23:46:30 +0200
 Subject: [PATCH] RunOptions::vblank_frame: per-frame game observer hook
@@ -16,10 +16,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 13 insertions(+), 1 deletion(-)
 
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index c5de5ac..b6ac6af 100644
+index 9d30f74..06e0fae 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
-@@ -2368,12 +2368,17 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -2424,12 +2424,17 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      if (opts.input_frame) {
          TouchHub::instance().set_claims(opts.touch_gesture_claims);
          publish_headless_touch_presentation();
@@ -39,10 +39,10 @@ index c5de5ac..b6ac6af 100644
          ~ClearVblankInputHook() { runtime_set_vblank_input_hook(nullptr); }
      } clear_vblank_input_hook;
 diff --git a/src/runtime/runtime.h b/src/runtime/runtime.h
-index d60ca8e..7d43087 100644
+index cb6717c..acde71b 100644
 --- a/src/runtime/runtime.h
 +++ b/src/runtime/runtime.h
-@@ -148,6 +148,13 @@ struct RunOptions {
+@@ -154,6 +154,13 @@ struct RunOptions {
      // (the recorded trace already contains the composed keys).
      std::uint16_t (*input_frame)(const TouchFrameInfo* frame) = nullptr;
  
