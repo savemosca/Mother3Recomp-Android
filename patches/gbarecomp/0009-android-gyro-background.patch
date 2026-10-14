@@ -1,0 +1,53 @@
+From 8f4e3d977791fbae7fd4541af72c4445ed9ece7c Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 21:28:31 +0200
+Subject: [PATCH] Android: release the gyro while the app is in the background
+
+When Android finished the game Activity while the app was in the
+background, run_game returned and HostWindow::close() destroyed the
+gyro's sensor event queue; that crashed the whole process in
+ASensorManager_destroyEventQueue (Looper::removeFd, SIGSEGV), launcher
+included. Seen on an RG556 (Android 14) when the game screen was closed
+while suspended.
+
+Close the sensor when wait_for_foreground() starts (a background app gets
+no sensor events, and an open sensor keeps the hardware awake) and reopen
+it when the app returns, so nothing is left to destroy on termination.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/runtime/host_window.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
+index 8e5d80b..b4143a2 100644
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -2755,6 +2755,16 @@ bool HostWindow::wait_for_foreground() {
+     auto* b = static_cast<Backend*>(impl_);
+     std::fprintf(stderr, "host_window: background — emulation suspended\n");
+     log_session_health(b, "background");
++    // Release the gyro while away (a background app gets no sensor events,
++    // and an open sensor keeps the hardware awake) and reopen it on return.
++    // Kept open, its event queue was destroyed in close() after Android had
++    // finished the backgrounded Activity, and that crashed the process in
++    // ASensorManager_destroyEventQueue (Looper::removeFd, SIGSEGV), taking
++    // the launcher down with it.
++    if (b->device_gyro) {
++        SDL_SensorClose(b->device_gyro);
++        b->device_gyro = nullptr;
++    }
+     if (b->audio_dev) SDL_PauseAudioDevice(b->audio_dev, 1);
+     TouchHub::instance().cancel_all(touch_clock_ms());
+     clear_touches(b);
+@@ -2769,6 +2779,7 @@ bool HostWindow::wait_for_foreground() {
+     }
+     b->backgrounded = false;
+     b->health_prev_present = 0;  // the time away is not a stall
++    if (resumed) open_device_gyro(b);
+     if (resumed && b->audio_dev) {
+         if (b->audio_direct) {
+             // Rebuild the cushion rather than replaying a stale queue.
+-- 
+2.56.0
+

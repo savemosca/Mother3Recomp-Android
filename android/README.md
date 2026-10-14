@@ -128,3 +128,22 @@ launcher, which uploads the session's save when cloud saves are on. If the
 system closes the game screen while the engine is still writing, the launcher
 waits up to 10 s for it before syncing; otherwise the next PLAY syncs. After a
 crash it shows the tail of `android-runtime.log`; a normal quit shows nothing.
+
+## Session diagnostics
+
+Problems that do not crash the game are recorded at almost no cost, so they
+can be found after playing:
+
+- Each session ends with a coverage line (`self_heal_coverage=FULLY_STATIC`
+  or the interpreted PCs) and a health line (engine patch 0008):
+  `session_health ... late_frames hitches max_gap_ms audio_dry_ms
+  audio_dropped_ms`. A frame is late after 25 ms, a hitch is a gap over
+  100 ms; the audio figures cover steady play only.
+- Before each PLAY the launcher copies the previous session's log, coverage
+  report and self-heal proposal to `files/sessions/<end time>/` (last 20).
+- `tools/rg556-health.sh` (adb + root) pulls them, plus Android's crash
+  buffer, into `health/` and prints one line per session.
+
+For a specific bug, `files/debug-env.txt` (created with `su`) sets engine
+variables such as `GBARECOMP_TRACE_ON_DISPATCH_MISS`; tracing slows the game,
+so delete the file afterwards.

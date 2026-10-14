@@ -94,14 +94,21 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     /** PLAY (and auto-start) go through here: sync the save first. */
     @Override
     public void startActivity(Intent intent) {
-        if (cloudSaves == null || intent.getComponent() == null
+        if (intent.getComponent() == null
                 || !GbaGameActivity.class.getName().equals(intent.getComponent().getClassName())) {
+            super.startActivity(intent);
+            return;
+        }
+        if (cloudSaves == null) {
+            SessionArchive.archivePrevious(getFilesDir());
             super.startActivity(intent);
             return;
         }
         cloudSaves.syncBeforePlay(() -> {
             // A sync can outlive this screen; a newer one handles PLAY then.
             if (isDestroyed()) return;
+            // The engine overwrites the last session's log and reports.
+            SessionArchive.archivePrevious(getFilesDir());
             cloudSaves.gameStarting();
             Mother3SetupActivity.super.startActivity(intent);
         });

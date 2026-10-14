@@ -117,3 +117,6 @@ android/local.properties
 /gbarecomp/
 /recomp-ui/
 android/app/.cxx/
+
+# Session diagnostics pulled from a device by tools/rg556-health.sh
+/health/
