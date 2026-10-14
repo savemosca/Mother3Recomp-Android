@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -29,6 +31,10 @@ public final class CloudSaves {
     private static final String CLIENT_VERSION = "0.1.3";
     /** Set while a game started from PLAY has not been synced back yet. */
     private static final String PLAYED = "played_since_sync";
+    /** How long syncAfterPlay waits for the engine thread: 20 x 500 ms. */
+    private static final int SYNC_WAIT_ATTEMPTS = 20;
+    private static final long SYNC_WAIT_MS = 500;
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     /** A sync in flight; {@link #then} runs once it (and any conflict choice) ends. */
     private static final class Job {
@@ -101,8 +107,23 @@ public final class CloudSaves {
 
     /** Uploads the session's progress after the game exits. */
     public void syncAfterPlay() {
-        // Kept for a later return while the game still runs or a sync is busy.
-        if (!prefs.getBoolean(PLAYED, false) || SdlSession.nativeRunning() || running != null) {
+        syncAfterPlay(0);
+    }
+
+    private void syncAfterPlay(int attempt) {
+        // Kept for a later return while a sync is busy.
+        if (!prefs.getBoolean(PLAYED, false) || running != null) return;
+        if (SdlSession.nativeRunning()) {
+            // The game screen can close before the engine thread ends (the
+            // system finishing it, or another task on top), so this screen
+            // resumes while the session is still writing the save. Poll until
+            // the thread is gone; on a longer wait the flag stays set, and the
+            // next return here or PLAY syncs instead.
+            if (attempt < SYNC_WAIT_ATTEMPTS) {
+                MAIN.postDelayed(() -> {
+                    if (alive()) syncAfterPlay(attempt + 1);
+                }, SYNC_WAIT_MS);
+            }
             return;
         }
         prefs.edit().remove(PLAYED).apply();

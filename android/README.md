@@ -121,6 +121,10 @@ unencrypted on that network.
 An APK with the ROM and BIOS embedded opens a small launcher instead of
 starting the game at once: **PLAY**, **RetroAchievements** and **Cloud
 saves**. The D-pad moves between them (the focused one has a yellow border),
-A selects, START plays from anywhere. Quitting the game returns to the
-launcher, which uploads the session's save when cloud saves are on. After a
+A selects, START plays from anywhere. To quit the game, open the runtime
+menu (Guide button, or a long press on the screen) and choose **System >
+Quit game** twice (patch 0007; Back belongs to the game). That returns to the
+launcher, which uploads the session's save when cloud saves are on. If the
+system closes the game screen while the engine is still writing, the launcher
+waits up to 10 s for it before syncing; otherwise the next PLAY syncs. After a
 crash it shows the tail of `android-runtime.log`; a normal quit shows nothing.

@@ -1,0 +1,70 @@
+From 7a49d3647fbef1ae122036d1ab5ea002008d7017 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 21:00:27 +0200
+Subject: [PATCH] Android: "Quit game" in the runtime menu
+
+On Android the menu offered no way out: the system Back button is routed
+to the game (a Back gesture) and there is no window to close, so a game
+started from a launcher could not return to it. Enable recomp-ui's
+standard "Quit game" item (System, press twice) there and handle its
+action like the desktop quit key: the session ends at the next input
+pump with the save flushed and no suspend state, SDL_main returns and
+SDLActivity finishes, back to the Activity that started the game.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/runtime/runtime.cpp | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index 368d57e..a93d85e 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -258,6 +258,7 @@ struct RuntimeUiContext {
+     int pending_save_slot = 0;
+     int pending_load_slot = 0;
+     bool pending_rewind = false;
++    bool pending_quit = false;
+     bool assist_tools_exposed = false;
+     bool assist_tools_enabled = true;
+     bool fast_forward_latched = false;
+@@ -360,6 +361,11 @@ int runtime_ui_action(void* opaque, const RecompRuntimeUiItem* item) {
+         recomp_runtime_ui_close(c->ui);
+         return 1;
+     }
++    if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_QUIT) == 0) {
++        c->pending_quit = true;
++        recomp_runtime_ui_close(c->ui);
++        return 1;
++    }
+     if (c->opts && c->opts->ui_action) return c->opts->ui_action(item->key);
+     return 0;
+ }
+@@ -3021,7 +3027,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+         // fractional mode for a toggle to switch off. Android's full-screen
+         // layout does fill the display fractionally, so it offers the choice.
+ #if defined(__ANDROID__)
+-        runtime_ui_config.features |= RECOMP_RUNTIME_UI_STANDARD_INTEGER_SCALE;
++        // A mobile game has no window to close and the system Back button is
++        // routed to the game, so the menu is the only clean way out: it ends
++        // the session (save flushed, no suspend state) and the Activity
++        // finishes, returning to whatever started it.
++        runtime_ui_config.features |= RECOMP_RUNTIME_UI_STANDARD_INTEGER_SCALE |
++                                      RECOMP_RUNTIME_UI_STANDARD_QUIT;
+ #else
+         runtime_ui_config.features |=
+             RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN |
+@@ -3598,6 +3609,10 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+             ev.load_slot = runtime_ui_context.pending_load_slot;
+             runtime_ui_context.pending_load_slot = 0;
+         }
++        if (runtime_ui_context.pending_quit) {
++            runtime_ui_context.pending_quit = false;
++            host_quit = true;
++        }
+ #endif
+         if (opts.expose_assist_tools && !assist_tools_enabled()) {
+             ev.save_slot = 0;
+-- 
+2.56.0
+
