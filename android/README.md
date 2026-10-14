@@ -33,6 +33,12 @@ hidden, and with the pad hidden the game fills the display height (6.75x on
 1080p, exact 3:2) through the sharp scaler instead of a 4x image between
 empty rails. The pad toggle in the corner still shows it.
 
+Two of them are engine bug fixes needed on every device: 0006 stops an
+occasional abort (Thumb code entered in ARM state) and the misplaced pixels
+after IRQs taken inside BIOS calls, and 0007 makes in-game saving work (the
+64 KB flash reported a 1 Mbit chip ID). See
+`docs/re/android-thumb-return-crash.md`.
+
 **Integer scaling** (in-game menu > Graphics) switches to the largest whole
 multiple instead: 6x = 1440x960 on the RG556, letterboxed on all sides. The
 choice is kept in `config.ini` `[Display]`; `[video] integer_scale = true` in

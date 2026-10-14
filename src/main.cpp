@@ -75,6 +75,27 @@ int mother3_main(int argc, char** argv) {
     const bool on_mobile = gbarecomp::mobile_prepare_process(args, mobile);
 
 #if defined(__ANDROID__)
+    // Diagnostics hook, the environment counterpart of the engine's
+    // debug-args.txt: KEY=VALUE lines (e.g. GBARECOMP_SELFHEAL_VERBOSE=1) from
+    // an app-private file only adb run-as / su can create. Read after the
+    // working directory moved to app storage and before run_game() resets the
+    // runtime, which is when the engine reads its trace switches. Absent in
+    // normal installs; every variable taken is logged.
+    if (std::FILE* f = std::fopen("debug-env.txt", "r")) {
+        char line[512];
+        while (std::fgets(line, sizeof(line), f)) {
+            line[std::strcspn(line, "\r\n")] = '\0';
+            char* eq = std::strchr(line, '=');
+            if (line[0] == '#' || !eq || eq == line) continue;
+            *eq = '\0';
+            setenv(line, eq + 1, 1);
+            std::fprintf(stderr, "mother3: debug env %s=%s\n", line, eq + 1);
+        }
+        std::fclose(f);
+    }
+#endif
+
+#if defined(__ANDROID__)
     // The Android shell in this gbarecomp revision appends --no-launcher, but
     // this runtime revision does not expose that CLI option. Android already
     // bypasses the desktop preboot launcher below, so simply remove the stale

@@ -1,0 +1,148 @@
+From df158d7ae451ea7046f6c89464ae02999eb188d4 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 20:09:18 +0200
+Subject: [PATCH] Flash: report a 512 Kbit chip ID for 64 KB flash
+
+Every flash size reported Macronix MX29L010 (C2/09), a 1 Mbit part.
+Nintendo's FLASH512 library matches the ID against Panasonic (32/1B),
+SST (BF/D4) and Macronix MX29L512 (C2/1C) only, and otherwise falls back
+to a driver that fails every write: MOTHER 3 (FLASH512_V131) answered
+"unable to save". 64 KB flash now reports the Panasonic MN63F805MNP, as
+mGBA does; 128 KB keeps the MX29L010 the pret Gen3 games use. The ID is
+re-derived when a savestate is loaded, so states from older builds save
+too. bus_tests checks the ID for both sizes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/gba/gba_save.cpp    | 27 +++++++++++++++++++++++++--
+ src/gba/gba_save.h      |  1 +
+ tests/bus/test_main.cpp | 35 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 61 insertions(+), 2 deletions(-)
+
+diff --git a/src/gba/gba_save.cpp b/src/gba/gba_save.cpp
+index ccf4055..b0fc192 100644
+--- a/src/gba/gba_save.cpp
++++ b/src/gba/gba_save.cpp
+@@ -116,6 +116,9 @@ void GbaSave::deserialize(gbarecomp::debug::SnapshotReader& r) {
+     flash_banks_   = r.u32();
+     flash_maker_   = r.u8();
+     flash_device_  = r.u8();
++    // The ID is a property of the chip, not of the moment: re-derive it so
++    // states saved before 512 Kbit parts got their own ID keep saving.
++    set_flash_chip_id();
+     flash_state_   = static_cast<FlashState>(r.u8());
+     flash_id_mode_ = r.boolean();
+     flash_bank_    = r.u8();
+@@ -264,6 +267,27 @@ uint16_t GbaSave::eeprom_read_bit() {
+ // 64 KB banks through the 64 KB window.
+ // ---------------------------------------------------------------------------
+ 
++// The ID the chip reports in autoselect mode, by size. Nintendo's flash
++// libraries pick their driver by matching it against a fixed table and fall
++// back to a driver that fails every write when nothing matches:
++//   1 Mbit:   FLASH1M_V10x lists Macronix MX29L010 (C2/09) and Sanyo (62/13);
++//             the pret Gen3 games are tested against the Macronix part.
++//   512 Kbit: FLASH512_V13x lists Panasonic MN63F805MNP (32/1B), SST 39VF512
++//             (BF/D4) and Macronix MX29L512 (C2/1C), not the 1 Mbit MX29L010
++//             (MOTHER 3's FLASH512_V131 reported "unable to save" with it).
++//             Panasonic is what mGBA reports for 64 KB flash
++//             (src/gba/savedata.c, FLASH_MFG_PANASONIC).
++// All of them use the command set implemented below.
++void GbaSave::set_flash_chip_id() {
++    if (flash_size_ == 0x10000) {
++        flash_maker_ = 0x32;   // Panasonic
++        flash_device_ = 0x1B;  // MN63F805MNP (512 Kbit)
++    } else {
++        flash_maker_ = 0xC2;   // Macronix
++        flash_device_ = 0x09;  // MX29L010 (1 Mbit)
++    }
++}
++
+ void GbaSave::configure_flash(std::size_t bytes) {
+     if (bytes != 0x10000 && bytes != 0x20000) bytes = 0x20000;  // default 1 Mbit
+     flash_enabled_ = true;
+@@ -271,8 +295,7 @@ void GbaSave::configure_flash(std::size_t bytes) {
+     flash_size_ = bytes;
+     flash_banks_ = static_cast<uint32_t>(bytes / kFlashBankBytes);
+     if (flash_banks_ == 0) flash_banks_ = 1;
+-    flash_maker_ = 0xC2;   // Macronix
+-    flash_device_ = 0x09;  // MX29L010 (1 Mbit); accepted by FLASH1M & 512K drivers
++    set_flash_chip_id();
+     flash_state_ = FlashState::Idle;
+     flash_id_mode_ = false;
+     flash_bank_ = 0;
+diff --git a/src/gba/gba_save.h b/src/gba/gba_save.h
+index c62f347..e426da7 100644
+--- a/src/gba/gba_save.h
++++ b/src/gba/gba_save.h
+@@ -108,6 +108,7 @@ private:
+         Program, Bank,
+     };
+     static constexpr uint32_t kFlashBankBytes = 0x10000;  // 64 KB window
++    void set_flash_chip_id();          // maker/device for flash_size_
+ 
+     bool flash_enabled_ = false;
+     std::size_t flash_size_ = 0;       // total chip bytes (0x20000 / 0x10000)
+diff --git a/tests/bus/test_main.cpp b/tests/bus/test_main.cpp
+index 1e546f6..48b5c6b 100644
+--- a/tests/bus/test_main.cpp
++++ b/tests/bus/test_main.cpp
+@@ -8,6 +8,7 @@
+ #include <filesystem>
+ #include <fstream>
+ #include <string>
++#include <utility>
+ #include <vector>
+ 
+ #include "gba_rom_header.h"
+@@ -448,6 +449,39 @@ void test_flash1m_beats_flash() {
+                static_cast<int>(gba::SaveType::Flash1M));
+ }
+ 
++std::pair<uint8_t, uint8_t> flash_chip_id(gba::GbaSave& save) {
++    save.flash_write(0x5555u, 0xAAu);
++    save.flash_write(0x2AAAu, 0x55u);
++    save.flash_write(0x5555u, 0x90u);
++    const std::pair<uint8_t, uint8_t> id{save.flash_read(0x0000u),
++                                         save.flash_read(0x0001u)};
++    save.flash_write(0x0000u, 0xF0u);
++    return id;
++}
++
++void test_flash_chip_id_matches_size() {
++    // Nintendo's FLASH512 library has no entry for the 1 Mbit MX29L010, so a
++    // 64 KB part must report a 512 Kbit chip (Panasonic, as mGBA does) or the
++    // game's driver falls back to one that fails every write.
++    gba::GbaSave save;
++    save.configure_flash(0x10000);
++    auto id = flash_chip_id(save);
++    check_eq("flash_chip_id", "512k_maker", id.first, 0x32u);
++    check_eq("flash_chip_id", "512k_device", id.second, 0x1Bu);
++
++    // A program cycle after the ID round-trip still lands.
++    save.flash_write(0x5555u, 0xAAu);
++    save.flash_write(0x2AAAu, 0x55u);
++    save.flash_write(0x5555u, 0xA0u);
++    save.flash_write(0x1234u, 0x5Au);
++    check_eq("flash_chip_id", "512k_program", save.flash_read(0x1234u), 0x5Au);
++
++    save.configure_flash(0x20000);
++    id = flash_chip_id(save);
++    check_eq("flash_chip_id", "1m_maker", id.first, 0xC2u);
++    check_eq("flash_chip_id", "1m_device", id.second, 0x09u);
++}
++
+ void eeprom_send_bits(gba::GbaSave& save, uint32_t value, int count) {
+     for (int bit = count - 1; bit >= 0; --bit) {
+         save.eeprom_write_bit(static_cast<uint16_t>((value >> bit) & 1u));
+@@ -548,6 +582,7 @@ int main() {
+     test_bios_window_writes_are_ignored();
+     test_matrix_memory_mapper();
+     test_flash1m_beats_flash();
++    test_flash_chip_id_matches_size();
+     test_eeprom_8k_read_write();
+     test_eeprom_persistence_bytes_and_dirty();
+     if (failures) {
+-- 
+2.56.0
+
