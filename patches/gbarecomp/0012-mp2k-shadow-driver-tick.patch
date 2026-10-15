@@ -1,0 +1,261 @@
+From b967916e743604f957eaad11b7da521c5dc6c58e Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 12:26:48 +0200
+Subject: [PATCH] MP2K shadow: read the driver's channels at its real tick
+
+Mp2kShadow::frame_hook() is meant to run once per driver tick, at the
+mixer's entry (SoundMainRAM): SoundInfo is then marked in flight
+('Smsh'+1), the sequencer has updated the channels, and note-on flags
+are not yet consumed by the mixer. That is how JRickey/gba-recomp calls
+it, and why init() records the SoundMainRAM entries as hook keys.
+
+The port never used those keys. GbaAudio polled frame_hook() every
+sample_rate()/60 grid samples instead (1092 at 65536 Hz, against about
+1097 per 59.73 Hz frame), so the poll drifted across the frame:
+- Most polls found SoundInfo idle and returned as stale ticks, leaving
+  gains and pitches frozen.
+- Polls that did land inside a tick could fall after the mixer had
+  consumed a note's START flag, so the note was missed.
+The verifier then rejected the shadow or reverted it, and the player
+heard the canon mix for much of the time.
+
+The ARM runtime now has a read-only observer for a few exact dispatch
+entries. The runtime registers the detected SoundMainRAM entries, and
+calls GbaAudio::shadow_driver_tick() when guest code dispatches to one
+of them; the fixed-rate poll is removed. Guest execution is unchanged:
+the observer only reads memory, and nothing is installed for a ROM
+without MP2K.
+
+A summary line is logged when the session is suspended or ends:
+
+  [audio] MP2K shadow (exit): live 97.0% of 600.0 s, driver ticks
+    35830 (stale 0), reverts 1, unsupported waves 0
+
+The engine did not log when the shadow substitutes, so the time it was
+actually live could not be measured before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/armv4t/runtime_arm.cpp |  9 ++++++++
+ src/armv4t/runtime_arm.h   | 10 +++++++++
+ src/gba/gba_audio.cpp      | 45 ++++++++++++++++++++++++++++++--------
+ src/gba/gba_audio.h        | 12 ++++++++--
+ src/gba/mp2k_shadow.h      |  7 ++++++
+ src/runtime/runtime.cpp    | 14 ++++++++++++
+ 6 files changed, 86 insertions(+), 11 deletions(-)
+
+diff --git a/src/armv4t/runtime_arm.cpp b/src/armv4t/runtime_arm.cpp
+index 3d07d55..d8d661f 100644
+--- a/src/armv4t/runtime_arm.cpp
++++ b/src/armv4t/runtime_arm.cpp
+@@ -61,6 +61,9 @@ extern "C" RuntimeThumbAluImmediateOverride
+     g_runtime_thumb_alu_imm_override = nullptr;
+ extern "C" RuntimeBusReadOverride g_runtime_bus_read_override = nullptr;
+ extern "C" RuntimeRamDispatchHook g_runtime_ram_dispatch_hook = nullptr;
++extern "C" RuntimeDispatchObserver g_runtime_dispatch_observer = nullptr;
++extern "C" uint32_t g_runtime_observed_pcs[RUNTIME_MAX_OBSERVED_PCS] = {};
++extern "C" unsigned g_runtime_observed_pc_count = 0;
+ extern "C" RuntimeForceInterpHook g_runtime_force_interp_hook = nullptr;
+ extern "C" int g_runtime_force_interp_step_active = 0;
+ 
+@@ -866,6 +869,12 @@ const DispatchEntry* dispatch_resolve(uint32_t target_pc) {
+         runtime_trace_event(RUNTIME_TRACE_DISPATCH, pc, target_pc, 0, 0);
+ 
+     bool thumb = (g_cpu.cpsr & CPSR_T_BIT) != 0;
++    for (unsigned i = 0; i < g_runtime_observed_pc_count; ++i) {
++        if (g_runtime_observed_pcs[i] == pc) {
++            g_runtime_dispatch_observer(pc, thumb ? 1 : 0);
++            break;
++        }
++    }
+     if (g_resumable_context && g_resumable_context->program_dispatch &&
+         g_resumable_context->program_dispatch(pc, thumb ? 1 : 0)) return nullptr;
+     // A generated caller may enter mutable code without returning through the
+diff --git a/src/armv4t/runtime_arm.h b/src/armv4t/runtime_arm.h
+index 1320736..97132a1 100644
+--- a/src/armv4t/runtime_arm.h
++++ b/src/armv4t/runtime_arm.h
+@@ -69,6 +69,16 @@ extern RuntimeBusReadOverride g_runtime_bus_read_override;
+ typedef int (*RuntimeRamDispatchHook)(uint32_t pc, int thumb);
+ extern RuntimeRamDispatchHook g_runtime_ram_dispatch_hook;
+ 
++// Optional read-only observer for a few exact dispatch entries (PCs without
++// the Thumb bit), called before the target runs. It must not change guest
++// state. The runtime uses it for the MP2K mixer's per-tick entry
++// (SoundMainRAM), which the audio shadow has to see at that exact point.
++typedef void (*RuntimeDispatchObserver)(uint32_t pc, int thumb);
++enum { RUNTIME_MAX_OBSERVED_PCS = 4 };
++extern RuntimeDispatchObserver g_runtime_dispatch_observer;
++extern uint32_t g_runtime_observed_pcs[RUNTIME_MAX_OBSERVED_PCS];
++extern unsigned g_runtime_observed_pc_count;
++
+ // Optional game/runtime predicate for executable regions whose bytes can change
+ // underneath a static dispatch entry (self-modifying RAM, banked cartridge
+ // apertures). A non-zero result selects the reference interpreter instead of
+diff --git a/src/gba/gba_audio.cpp b/src/gba/gba_audio.cpp
+index e7330c4..c06eb9f 100644
+--- a/src/gba/gba_audio.cpp
++++ b/src/gba/gba_audio.cpp
+@@ -947,9 +947,6 @@ void GbaAudio::configure_shadow(const std::vector<Mp2kSig>& sigs,
+     shadow_sigs_ = sigs;
+     shadow_.init(sigs);
+     shadow_cursor_ = 0;
+-    shadow_samples_since_hook_ = 0;
+-    shadow_hook_period_ = sample_rate() / 60u;
+-    if (shadow_hook_period_ == 0) shadow_hook_period_ = 1097u;
+     // Opt-in. `enable_request` is the per-game default ([audio].shadow in
+     // game.toml); GBARECOMP_AUDIO_SHADOW overrides it ("0" forces off, any
+     // other value forces on). Only takes effect if the ROM links MP2K.
+@@ -970,13 +967,46 @@ void GbaAudio::set_shadow_enabled(bool on) {
+         shadow_ = Mp2kShadow{};  // voices and verifier start over
+         shadow_.init(shadow_sigs_);
+         shadow_cursor_ = 0;
+-        shadow_samples_since_hook_ = 0;
+     }
+     shadow_enabled_ = on;
+     std::fprintf(stderr, "[audio] MP2K shadow mixer %s by the player\n",
+                  on ? "ARMED" : "off");
+ }
+ 
++std::size_t GbaAudio::shadow_hook_pcs(uint32_t* out, std::size_t max) const {
++    if (!shadow_.armed()) return 0;
++    std::size_t n = 0;
++    for (const auto& sig : shadow_sigs_) {
++        if (n == max) break;
++        out[n++] = sig.sound_main_ram & ~1u;
++    }
++    return n;
++}
++
++void GbaAudio::shadow_driver_tick(uint32_t pc, bool thumb) {
++    // Each tick, at its exact point: a fixed-rate poll drifts against the
++    // driver's VBlank cadence and mostly finds SoundInfo idle (not 'Smsh'+1),
++    // or past the mixer's note-on processing.
++    if (!shadow_enabled_) return;
++    shadow_.frame_hook(shadow_mem_, shadow_cursor_, thumb ? (pc | 1u) : pc);
++}
++
++void GbaAudio::log_shadow_summary(const char* when) const {
++    if (!shadow_.armed() || shadow_enabled_samples_ == 0) return;
++    const double rate = sample_rate() ? sample_rate() : 65536.0;
++    std::fprintf(stderr,
++                 "[audio] MP2K shadow (%s): live %.1f%% of %.1f s, driver ticks "
++                 "%llu (stale %llu), reverts %llu, unsupported waves %llu\n",
++                 when,
++                 100.0 * static_cast<double>(shadow_live_samples_) /
++                     static_cast<double>(shadow_enabled_samples_),
++                 static_cast<double>(shadow_enabled_samples_) / rate,
++                 static_cast<unsigned long long>(shadow_.hooks()),
++                 static_cast<unsigned long long>(shadow_.stale_ticks()),
++                 static_cast<unsigned long long>(shadow_.pauses()),
++                 static_cast<unsigned long long>(shadow_.bad_waves()));
++}
++
+ void GbaAudio::run_sample_event() {
+     uint32_t samples = samples_per_event();
+     CapSample caps[kMaxSamplesPerEvent] = {};
+@@ -993,12 +1023,9 @@ void GbaAudio::run_sample_event() {
+                              degraded.c_str());
+             }
+             ++shadow_cursor_;
+-            if (++shadow_samples_since_hook_ >= shadow_hook_period_) {
+-                shadow_.frame_hook(shadow_mem_, shadow_cursor_,
+-                                   shadow_.hook_key0());
+-                shadow_samples_since_hook_ = 0;
+-            }
+             substitute = shadow_.live();
++            ++shadow_enabled_samples_;
++            if (substitute) ++shadow_live_samples_;
+         }
+         // When the shadow is proven-live, mix PSG-only canon + the shadow's
+         // direct-sound render; otherwise the full canon mix (incl. FIFO).
+diff --git a/src/gba/gba_audio.h b/src/gba/gba_audio.h
+index aec5853..56e2aca 100644
+--- a/src/gba/gba_audio.h
++++ b/src/gba/gba_audio.h
+@@ -165,6 +165,14 @@ public:
+     // that has to prove itself again; switching off returns to the canon
+     // mix at once. No effect when the ROM does not link MP2K.
+     void set_shadow_enabled(bool on);
++    // Entry PCs (Thumb bit clear) of the detected SoundMainRAM copies; the
++    // runtime calls shadow_driver_tick() when guest code dispatches to one.
++    std::size_t shadow_hook_pcs(uint32_t* out, std::size_t max) const;
++    // One MP2K driver tick: SoundMain has updated the channels and is about
++    // to mix. The shadow re-reads the channel state here.
++    void shadow_driver_tick(uint32_t pc, bool thumb);
++    // One log line: how long the shadow substituted, ticks seen, reverts.
++    void log_shadow_summary(const char* when) const;
+ 
+     // Save-state serialization. Captures the full guest mixer state
+     // (channels, FIFOs, master, soundbias, sample accumulator) plus the
+@@ -353,8 +361,8 @@ private:
+     MemView    shadow_mem_{};
+     bool       shadow_enabled_ = false;
+     uint64_t   shadow_cursor_ = 0;          // running grid-sample count
+-    uint32_t   shadow_samples_since_hook_ = 0;
+-    uint32_t   shadow_hook_period_ = 1097;  // ≈ output samples per 59.7 Hz tick
++    uint64_t   shadow_enabled_samples_ = 0;  // samples rendered while enabled
++    uint64_t   shadow_live_samples_ = 0;     // ... of which substituted
+ };
+ 
+ }  // namespace gba
+diff --git a/src/gba/mp2k_shadow.h b/src/gba/mp2k_shadow.h
+index e994e08..7c22109 100644
+--- a/src/gba/mp2k_shadow.h
++++ b/src/gba/mp2k_shadow.h
+@@ -65,6 +65,13 @@ public:
+ 
+     uint32_t hook_key0() const { return hook_n_ ? hook_keys_[0] : 0; }
+ 
++    // Diagnostics: driver ticks seen, ticks whose SoundInfo was not live,
++    // waves the shadow cannot model, and verifier reverts.
++    uint64_t hooks() const { return hooks_; }
++    uint64_t stale_ticks() const { return stale_ticks_; }
++    uint64_t bad_waves() const { return bad_waves_; }
++    uint64_t pauses() const { return vf_.pauses(); }
++
+ private:
+     struct Voice {
+         bool     on = false;
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index 6df5fc0..8f1d502 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -1811,6 +1811,18 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+                               (se && se[0] && se[0] != '0'));
+     }
+     bus.set_rom(rom.data(), rom.size());
++    // The MP2K audio shadow re-reads the driver's channels once per tick, at
++    // the mixer's entry (SoundMainRAM), which guest code reaches through
++    // dispatch. Observing only; nothing is installed when the ROM has no MP2K.
++    g_runtime_observed_pc_count = static_cast<unsigned>(
++        bus.audio().shadow_hook_pcs(g_runtime_observed_pcs,
++                                    RUNTIME_MAX_OBSERVED_PCS));
++    g_runtime_dispatch_observer = g_runtime_observed_pc_count
++        ? [](uint32_t pc, int thumb) {
++              if (gba::GbaBus* b = gbarecomp::active_bus())
++                  b->audio().shadow_driver_tick(pc, thumb != 0);
++          }
++        : nullptr;
+     if (!args.quiet && bus.matrix().active()) {
+         std::printf(
+             "matrix_mapper=active physical_size=%zu aperture=%zu page_size=%zu\n",
+@@ -3537,6 +3549,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+             // persist the cartridge save, a suspend state and the session's
+             // diagnostic rings now.
+             const bool saved = flush_save_notify();
++            bus.audio().log_shadow_summary(ev.terminating ? "terminating" : "background");
+             write_session_diagnostics(opts, ev.terminating ? "terminating" : "background",
+                                       ppu.frame_count());
+             std::string e;
+@@ -4389,6 +4402,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+     // Through the wrapper: the web notice does not depend on HostWindow, so
+     // running after win.close() is fine.
+     bool save_ok = flush_save_notify();
++    bus.audio().log_shadow_summary("exit");
+     if (!suspend_on_exit) clear_suspend_marker();
+     if (args.window && args.frames >= 0) {
+         std::printf("bounded_window start_frame=%llu end_frame=%llu presented=%llu "
+-- 
+2.56.0
+

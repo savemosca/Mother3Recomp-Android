@@ -1,0 +1,137 @@
+From fc09a857de82b2c07549ac943c48d48393318c11 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 17:43:52 +0200
+Subject: [PATCH] GbaAudio: low-pass the PSG channels while the MP2K shadow
+ substitutes
+
+The PSG channels are synthesized with ideal hard edges. In the canon mix
+the FIFO music is an 8-bit sample-and-hold at the driver's rate (about
+13 kHz in MOTHER 3), whose rough high band masks those edges. Next to
+the clean shadow they stand out. MOTHER 3 uses low-level noise-channel
+bursts as percussion (0.2-1 s, about every 7-8 s in the overworld
+theme), and with the shadow on the player heard them as micro-crackle.
+
+On an RG556, two 45 s captures from the same suspend state, of every
+output slot with its PSG and shadow parts:
+- Shadow on: 171 local discontinuities, 170 of them in the PSG part.
+  The shadow part had 3.
+- Shadow off: the same PSG bursts showed 8.
+
+An offline 2nd-order Butterworth low-pass at 8 kHz on the PSG part
+removed the crackle for the player, and the percussion still sounded
+right.
+
+While the shadow substitutes, mix_slot() now runs the PSG part through
+that filter, as a device's output stage would. It is computed for the
+current grid rate and primed at the current level when substitution
+starts, so there is no step. The canon mix (shadow off or not live) is
+unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/gba/gba_audio.cpp | 40 ++++++++++++++++++++++++++++++++++++++++
+ src/gba/gba_audio.h   |  9 +++++++++
+ 2 files changed, 49 insertions(+)
+
+diff --git a/src/gba/gba_audio.cpp b/src/gba/gba_audio.cpp
+index 4303d45..d2acded 100644
+--- a/src/gba/gba_audio.cpp
++++ b/src/gba/gba_audio.cpp
+@@ -4,6 +4,7 @@
+ #include "gba_audio.h"
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <string>
+@@ -1006,6 +1007,36 @@ void GbaAudio::log_shadow_summary(const char* when) const {
+                  static_cast<unsigned long long>(shadow_.bad_waves()));
+ }
+ 
++int16_t GbaAudio::psg_low_pass(int16_t in) {
++    PsgLowPass& f = psg_lp_;
++    const uint32_t rate = sample_rate();
++    if (f.rate != rate) {
++        constexpr float kCutoffHz = 8000.0f;
++        constexpr float kQ = 0.70710678f;
++        const float w0 = 6.28318530f * kCutoffHz / static_cast<float>(rate);
++        const float alpha = std::sin(w0) / (2.0f * kQ);
++        const float cw = std::cos(w0);
++        const float a0 = 1.0f + alpha;
++        f.b0 = (1.0f - cw) * 0.5f / a0;
++        f.b1 = (1.0f - cw) / a0;
++        f.b2 = f.b0;
++        f.a1 = -2.0f * cw / a0;
++        f.a2 = (1.0f - alpha) / a0;
++        f.rate = rate;
++        f.primed = false;
++    }
++    const float x = static_cast<float>(in);
++    if (!f.primed) {
++        // Start at the current level: no step when substitution begins.
++        f.x1 = f.x2 = f.y1 = f.y2 = x;
++        f.primed = true;
++    }
++    const float y = f.b0 * x + f.b1 * f.x1 + f.b2 * f.x2 - f.a1 * f.y1 - f.a2 * f.y2;
++    f.x2 = f.x1; f.x1 = x;
++    f.y2 = f.y1; f.y1 = y;
++    return static_cast<int16_t>(std::lround(std::clamp(y, -32767.0f, 32767.0f)));
++}
++
+ void GbaAudio::mix_slot(uint32_t slot) {
+     bool substitute = false;
+     float sl = 0.0f, sr = 0.0f;
+@@ -1027,6 +1058,13 @@ void GbaAudio::mix_slot(uint32_t slot) {
+     ChannelTap tap;
+     int16_t s = mix_one_sample(slot, /*include_direct=*/!substitute, &tap);
+     if (substitute) {
++        // The PSG channels are synthesized with ideal hard edges. Under the
++        // canon mix the FIFO's 8-bit sample-and-hold at the driver rate
++        // masks them; next to the clean shadow they are heard as crackle
++        // (MOTHER 3's noise-channel percussion). Smooth them like a
++        // device's output stage would: 2nd-order Butterworth at 8 kHz.
++        s = psg_low_pass(s);
++
+         // The shadow's right/left are MP2K's FIFO A/B streams in the bus
+         // float domain (full-scale DAC = 0.25, i.e. 128 in s8 units).
+         // Route and scale them exactly as mix_one_sample does the FIFO
+@@ -1048,6 +1086,8 @@ void GbaAudio::mix_slot(uint32_t slot) {
+         if (o > 32767) o = 32767;
+         if (o < -32767) o = -32767;
+         s = static_cast<int16_t>(o);
++    } else {
++        psg_lp_.primed = false;
+     }
+     current_samples_[slot] = s;
+     current_sample_rates_[slot] = 1 + ((soundbias_ >> 14) & 3);
+diff --git a/src/gba/gba_audio.h b/src/gba/gba_audio.h
+index 1f95787..3835086 100644
+--- a/src/gba/gba_audio.h
++++ b/src/gba/gba_audio.h
+@@ -325,6 +325,14 @@ private:
+     int16_t current_samples_[kMaxSamplesPerEvent] = {};
+     uint8_t current_sample_rates_[kMaxSamplesPerEvent] = {};
+     CapSample current_caps_[kMaxSamplesPerEvent] = {};
++    // 2nd-order Butterworth low-pass (8 kHz) on the PSG part while the MP2K
++    // shadow substitutes; see mix_slot().
++    struct PsgLowPass {
++        uint32_t rate = 0;
++        float b0 = 0, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
++        float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
++        bool  primed = false;
++    } psg_lp_;
+     uint32_t sample_index_ = 0;
+     std::vector<FifoTrace> trace_;
+     uint32_t trace_write_ = 0;
+@@ -343,6 +351,7 @@ private:
+     // MP2K shadow while it substitutes. The single place both the event and
+     // the mid-event catch-up (sample_until_current_time) produce samples.
+     void mix_slot(uint32_t slot);
++    int16_t psg_low_pass(int16_t in);
+     void run_sample_event();
+     void ch1_trigger();
+     void ch2_trigger();
+-- 
+2.56.0
+

@@ -1,6 +1,9 @@
 # MOTHER 3 HQ Audio patch vs the engine's MP2K shadow mixer
 
-Status: **shadow mixer adopted** (2026-10-15), EN 1.3 only. It is switched in
+Status: **shadow mixer adopted** (2026-10-15), EN 1.3 only, after engine
+patches 0012 (driver tick), 0013 (output level), 0014 (gain glide), 0015
+(catch-up samples: the audible crackle) and 0016 (PSG low-pass: the
+micro-crackle). It is switched in
 the runtime menu (Audio > Enhanced audio, engine patch 0011), and on for the
 author's RG556.
 
@@ -91,9 +94,173 @@ Engine patch 0011 adds a runtime-menu row, Audio > **Enhanced audio**:
   - The engine does not log when the shadow goes live, so "live for the rest
     of the session" is inferred: the verifier needed 4 passing ~1 s windows
     after the second revert, and nothing reverted again.
+- That session ran before engine patch 0012. As the A/B below shows, the
+  shadow was then live for little or none of the time, so these figures say
+  little about the shadow itself.
 - Cost: the emulation thread used about 58% of one core. Health was
   `late_frames=65 hitches=0 max_gap_ms=33.6 audio_dry_ms=0.0`; a 41939-frame
   session without the shadow had 44 late frames.
+
+## Engine bug: the shadow polled instead of following the driver tick (2026-10-15)
+
+`Mp2kShadow::frame_hook()` must run once per driver tick, at the mixer's entry
+(SoundMainRAM). At that point SoundInfo is in flight ('Smsh'+1) and the
+note-on flags have not been consumed yet. JRickey/gba-recomp calls it there,
+and `init()` records the SoundMainRAM entries as hook keys for that reason.
+
+gbarecomp's port never used the keys. `GbaAudio` polled every
+`sample_rate()/60` grid samples (1092, against about 1097 per frame), so the
+poll drifted across the frame. Most polls found SoundInfo idle and were
+dropped as stale.
+
+Engine patch 0012 adds a read-only dispatch observer for the SoundMainRAM
+entries. In MOTHER 3, SoundMain reaches 0x03000001 with `bx r3`, which the
+generated code sends through tail dispatch. The patch also adds a summary
+line, logged when the session is suspended or ends.
+
+A/B on the RG556, from the same suspend state (frame 93892, overworld
+music), 95 s each:
+
+| Build | live | driver ticks | stale | reverts | late frames |
+|---|---|---|---|---|---|
+| fixed-rate poll (before) | **0.0%** | 5700 | 5604 | 0 | 1 |
+| driver-tick observer (0012) | **95.8%** | 5672 | 0 | 0 | 0 |
+
+The first ~4 s are the verifier's probation. So before 0012 the player was
+hearing the original mix almost all the time, and "Enhanced audio" sounded
+better than it was.
+
+## Engine bug: the shadow played about 12 dB low (2026-10-15)
+
+With the shadow live (after 0012), the player heard crackle in the
+overworld music. A temporary raw dump of the output, 90 s from the same
+overworld scene, showed the cause.
+
+While the shadow substitutes, its mix replaces only the Direct Sound part of
+each sample, through a fixed `kShadowOutputScale` of 24000 that the code
+marks as a knob still to tune. The canon path maps a full-scale DAC on both
+FIFOs to 24576, the shadow's full scale to 6000. The PSG channels (squares
+and noise) stay at their normal level, so they stood out.
+
+Engine patch 0013 routes and scales the shadow's right/left like the FIFO
+A/B bytes: SOUNDCNT_H volume, L/R enables, averaged, x48.
+
+| | music level vs canon | music over PSG | shadow peak | >8 kHz energy |
+|---|---|---|---|---|
+| canon (hardware mix) | 1.00 | 15.9 dB | 17184 | 0.82% |
+| shadow before 0013 | 0.24 (-12.6 dB) | 3.4 dB | 4321 | 0.03% |
+| shadow with 0013 | 0.97 | 15.6 dB | 18099 | 0.03% |
+
+The shadow stream itself had no clipping and no discontinuities. Its few
+jumps over 3000 fall about every 1.8 s, on the music's beat: they are
+percussion attacks, and the canon has 20 times more. The >8 kHz figure is
+the 8-bit hiss the shadow removes.
+
+## Engine bug: gain steps clicked in the clean shadow (2026-10-15)
+
+At the right level (0013), the player still heard a raspy crackle in the
+overworld music, and only with the shadow on (checked by toggling it in the
+menu). Two diagnostic runs located it: an output dump with the driver ticks
+marked, and a per-tick voice event log.
+
+- The shadow's second difference at the first sample of each tick was 3.5
+  times the average elsewhere.
+- 212 ticks in about 44 s of live audio had an output jump over 200 (of
+  32767), up to 3806.
+- 108 of the 151 ticks with a gain step on a continuing voice had one.
+  These are notes just released (status 0x51/0x52), with steps of up to
+  15% of full scale. Most of the rest were voices cut at the tick.
+- The spectrogram shows them as thin vertical (broadband) lines.
+
+The hardware mix has the same steps, but its 8-bit noise masks them.
+
+Engine patch 0014:
+- Each voice's output gain glides toward the tick's target (one pole,
+  about 0.3 ms).
+- Voices the driver ends fade out over a few milliseconds instead of
+  stopping at once.
+- The verifier's check copy keeps the driver's stepped gains.
+
+Same title-screen capture from a cold boot, before and after:
+
+| | tick d2 vs average | tick jumps p90 | max | ticks with a jump over 200 |
+|---|---|---|---|---|
+| 0013 | 3.5x | 150 | 3806 | 212 |
+| 0014 | 0.9x | 74 (random positions: 77) | 1047 | 33 |
+
+The level stayed at 0.97 of the canon. The remaining large sample jumps sit
+in one second of percussive title sound, where the canon peaks too.
+
+## Engine bug: catch-up samples bypassed the shadow (2026-10-15) — the crackle
+
+After 0014 the player still heard the crackle, and only with the shadow on.
+WAV files made from the engine's output sounded clean on the Mac. A
+capture of the stream handed to the audio bridge (`push_audio_samples`,
+with the bridge output alongside) crackled on the Mac too, from 13 s on.
+There, 1-3 sample spikes appeared, often as repeated values (for example
+`-4016, 6768, 6768, -4051`), up to 698 a second.
+
+The cause:
+- `GbaAudio` produces samples in `run_sample_event()` and in
+  `sample_until_current_time()`. The second mixes the event's slots up to
+  "now" before every sound register write.
+- Only the first knew about the shadow. The catch-up mixed the canon FIFO
+  instead.
+- The shadow runs about one frame ahead of the canon, so each register
+  write inserted canon samples from elsewhere in the waveform.
+- The earlier dumps sampled only `run_sample_event()`'s loop, which is why
+  they looked clean.
+
+Engine patch 0015 routes both through `mix_slot()`.
+
+Bridge-input capture, 45 s each, overworld:
+
+| | spikes | worst second | repeated-value jumps |
+|---|---|---|---|
+| before 0015 | 6192 | 698 | 381 |
+| after 0015 | 189 | 52 | 21 |
+
+The remaining ones are clean level steps in single seconds, the shape of
+PSG square edges in sound effects. They are the same with the shadow off.
+
+Lessons:
+- 0013's level fix was real.
+- 0014's gain glide removes real tick-boundary steps, but it was not what
+  the player heard.
+- An experiment that opened the Android device at 48000 Hz, so that RAB
+  converts instead of the system mixer, only changed the crackle's
+  character. It was dropped.
+- Capture as close to the device as possible before concluding that the
+  output is clean.
+
+## Micro-crackle: hard PSG edges next to the clean shadow (2026-10-15)
+
+After 0015 the player still heard occasional micro-crackle in the same
+places. Two 45 s captures were taken from the same suspend state, with every
+output slot split into its PSG and shadow parts:
+- Shadow on: 171 local discontinuities, in bursts of single seconds. 170
+  of them were in the PSG part; the shadow part had 3.
+- Shadow off: the same PSG bursts showed 8.
+
+The bursts are low-level noise-channel percussion (values +-600..1800,
+0.2-1 s, about every 7-8 s). The engine synthesizes PSG with ideal hard
+edges. The canon FIFO music (8-bit sample-and-hold at about 13 kHz) masks
+them; the clean shadow does not.
+
+The player compared three offline renders. The one with a 2nd-order
+Butterworth low-pass at 8 kHz on the PSG part only removed the crackle and
+kept the percussion. Engine patch 0016 applies that filter while the shadow
+substitutes. It is primed at the current level, so there is no step, and
+the canon path is unchanged. mGBA likewise offers an optional audio
+low-pass.
+
+Bridge-input capture from the same state, 45 s each:
+
+| | discontinuities | worst second | >10 kHz energy |
+|---|---|---|---|
+| shadow on, no filter | 171 | 52 | 0.076% |
+| shadow on, PSG low-pass (0016) | 1 | 1 | 0.015% |
+| shadow off (canon) | 8 | 2 | 0.715% |
 
 ## Unrelated finding: mono output
 
@@ -104,8 +271,12 @@ without either enhancement.
 
 ## Open questions
 
-- Log when the shadow goes live (engine), so that live time can be measured
-  rather than inferred.
+- Battle and rhythm-combo music with the fixed shadow (0012): live
+  percentage and reverts.
+- `Mp2kShadow` assumes a 65536 Hz grid (`kRenderHz`), but `GbaAudio`'s grid
+  follows SOUNDBIAS (32768-262144 Hz). A game that changes the resolution
+  would play the shadow at the wrong pitch; the verifier should then keep it
+  off.
 - Does it stay in step with the rhythm-combo timing? No problem was heard in
   one battle.
 - What are the pools in the table at 0x08120E20? This only matters for the

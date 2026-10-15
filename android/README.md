@@ -42,7 +42,9 @@ inside BIOS calls. See `docs/re/android-thumb-return-crash.md`.
 **Integer scaling** (in-game menu > Graphics) switches to the largest whole
 multiple instead: 6x = 1440x960 on the RG556, letterboxed on all sides. The
 choice is kept in `config.ini` `[Display]`; `[video] integer_scale = true` in
-`game_android_*.toml` makes it the default for new installs.
+`game_android_*.toml` makes it the default for new installs. The bars around
+the game are pure black (engine patch 0017), so on the RG556's OLED panel
+those pixels are off rather than lit dim navy.
 
 `--generated-opt -O2` compiles the generated corpus at -O2 instead of -O1;
 expect a much longer native build.

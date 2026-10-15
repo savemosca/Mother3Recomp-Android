@@ -1,0 +1,51 @@
+From f1fc359b59879f9c6c83c8b581f6e201e0d74dc3 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 17:52:46 +0200
+Subject: [PATCH] Android: letterbox the game in pure black
+
+On Android the area around the game viewport was cleared to a dim navy
+(7, 11, 20): the pillar- and letterbox bars of an integer-scaled image,
+or the touch-control rails when the pad is hidden. On OLED panels
+(common on Android phones and handhelds such as the Anbernic RG556)
+those pixels stayed lit, in the same place, for whole sessions.
+
+The Android presenter now clears to (0, 0, 0), so the bars are switched
+off. On the RG556 at 6x (1440x960 on 1920x1080) that is 240 px on each
+side and 60 px above and below. Desktop keeps its colour.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/runtime/host_window.cpp | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
+index 7c51aff..654259e 100644
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -1912,7 +1912,7 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+     // Mobile presentation owns the whole drawable: a centered integer-scaled
+     // game viewport plus dedicated side rails for touch controls.
+     SDL_RenderSetLogicalSize(b->renderer, 0, 0);
+-    SDL_SetRenderDrawColor(b->renderer, 7, 11, 20, 255);
++    SDL_SetRenderDrawColor(b->renderer, 0, 0, 0, 255);
+ #else
+     if (b->expanded_view || b->resize_driven_view) {
+         // The destination viewport is computed explicitly in present() so
+@@ -2405,7 +2405,14 @@ void HostWindow::present(const uint8_t* rgb888) {
+         rgb888 = b->graded_fb.data();
+     }
+     SDL_UpdateTexture(b->texture, nullptr, rgb888, b->base_w * 3);
++#if defined(__ANDROID__)
++    // Pure black around the game: on OLED panels (common on Android phones
++    // and handhelds such as the RG556) those pixels are then off, not a dim
++    // navy lit for hours in the same place.
++    SDL_SetRenderDrawColor(b->renderer, 0, 0, 0, 255);
++#else
+     SDL_SetRenderDrawColor(b->renderer, 7, 11, 20, 255);
++#endif
+     SDL_RenderClear(b->renderer);
+ #if defined(__ANDROID__)
+     if (!b->insets_from_env && g_android_insets_known.load()) {
+-- 
+2.56.0
+

@@ -1,0 +1,68 @@
+From 3e2930a55a522a4e1f9767175fb106406722a431 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 15:49:10 +0200
+Subject: [PATCH] MP2K shadow: play at the canon direct-sound level
+
+While the shadow substitutes, its mix replaces the Direct Sound FIFO
+part of each output sample, through a fixed kShadowOutputScale of 24000
+marked as a knob still to tune. The canon path scales FIFO bytes by the
+DMA volume (x4 at 100%) and averages the enabled sides, times 48: a
+full-scale DAC on both FIFOs gives 24576. The shadow's full scale (0.25
+in bus float) gave 0.25 * 24000 = 6000, about 12 dB lower.
+
+The PSG channels stay in the canon mix at their normal level, so the
+balance between music and PSG shifted. Measured in MOTHER 3's overworld
+music on an RG556 (90 s, shadow live 97.8%):
+- music 12.6 dB quieter;
+- music over PSG 3.4 dB instead of 15.9 dB;
+- the player heard the PSG squares and noise as crackle.
+The shadow's own stream was clean, with no jumps and no clipping.
+
+The shadow's right/left now go through the same routing and scaling as
+the FIFO A/B bytes: SOUNDCNT_H volume and L/R enables, averaged, x48.
+The verifier is unchanged; it already compares levels in its own
+domain.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/gba/gba_audio.cpp | 24 +++++++++++++++++-------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/src/gba/gba_audio.cpp b/src/gba/gba_audio.cpp
+index c06eb9f..c247ea4 100644
+--- a/src/gba/gba_audio.cpp
++++ b/src/gba/gba_audio.cpp
+@@ -1032,13 +1032,23 @@ void GbaAudio::run_sample_event() {
+         ChannelTap tap;
+         int16_t s = mix_one_sample(slot, /*include_direct=*/!substitute, &tap);
+         if (substitute) {
+-            // Shadow output is the bus float domain (full-scale FIFO DAC =
+-            // 0.25). kShadowOutputScale maps it to our int16 direct-sound
+-            // magnitude — the loudness-match knob to tune in the audio
+-            // oracle validation pass.
+-            constexpr float kShadowOutputScale = 24000.0f;
+-            int32_t shadow_mix =
+-                static_cast<int32_t>(((sl + sr) * 0.5f) * kShadowOutputScale);
++            // The shadow's right/left are MP2K's FIFO A/B streams in the bus
++            // float domain (full-scale DAC = 0.25, i.e. 128 in s8 units).
++            // Route and scale them exactly as mix_one_sample does the FIFO
++            // bytes (SOUNDCNT_H volume and L/R enables), so the music keeps
++            // its level against the PSG channels. The former fixed 24000
++            // scale played it about 12 dB low (a full-scale DAC gave 6000
++            // against the canon's 24576).
++            const float fifo_a = sr * 512.0f;
++            const float fifo_b = sl * 512.0f;
++            const float a = fifo_a * (direct_a_full_volume_ ? 4.0f : 2.0f);
++            const float b = fifo_b * (direct_b_full_volume_ ? 4.0f : 2.0f);
++            const float direct_left =
++                (direct_a_left_ ? a : 0.0f) + (direct_b_left_ ? b : 0.0f);
++            const float direct_right =
++                (direct_a_right_ ? a : 0.0f) + (direct_b_right_ ? b : 0.0f);
++            int32_t shadow_mix = static_cast<int32_t>(
++                (direct_left + direct_right) * 0.5f * 48.0f);
+             int32_t o = static_cast<int32_t>(s) + shadow_mix;
+             if (o > 32767) o = 32767;
+             if (o < -32767) o = -32767;
+-- 
+2.56.0
+
