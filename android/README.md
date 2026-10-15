@@ -119,8 +119,11 @@ unencrypted on that network.
 ## Launcher
 
 An APK with the ROM and BIOS embedded opens a small launcher instead of
-starting the game at once: **PLAY**, **RetroAchievements** and **Cloud
-saves**. The D-pad moves between them (the focused one has a yellow border),
+starting the game at once: **PLAY**, **RetroAchievements**, **Cloud
+saves** and **Options**. Options sets, before playing, the runtime-menu
+settings the engine remembers in `config.ini`: integer scaling and enhanced
+audio. The others (volume, filter, FPS) last one session and stay in the
+in-game menu. The D-pad moves between them (the focused one has a yellow border),
 A selects, START plays from anywhere. To quit the game, open the runtime
 menu (Guide button, or a long press on the screen) and choose **System >
 Quit game** twice (patch 0007; Back belongs to the game). That returns to the
@@ -155,7 +158,8 @@ For a specific bug, `files/debug-env.txt` (created with `su`) sets engine
 variables such as `GBARECOMP_TRACE_ON_DISPATCH_MISS`; tracing slows the game,
 so delete the file afterwards.
 
-`GBARECOMP_AUDIO_SHADOW=1` in the same file turns on the engine's MP2K
-shadow mixer (float re-render without the 8-bit hiss; it reverts on
-divergence). Background, and why it is preferred to the MOTHER 3 HQ Audio
-ROM patch: `docs/re/hq-audio-patch.md`.
+**Enhanced audio** (runtime menu, Audio; engine patch 0011) switches the
+engine's MP2K shadow mixer. It re-renders the music in float without the 8-bit
+hiss, and reverts to the original mix on divergence. The choice is kept in
+`config.ini`. For why it is preferred to the MOTHER 3 HQ Audio ROM patch, see
+`docs/re/hq-audio-patch.md`.

@@ -35,9 +35,9 @@ import java.nio.charset.StandardCharsets;
  * MOTHER 3 front screen.
  *
  * Without embedded assets it is the shared ROM/BIOS setup screen plus the
- * RetroAchievements and cloud-save buttons. An APK with the ROM and BIOS
- * embedded shows a small launcher instead (PLAY, RetroAchievements, cloud
- * saves), which the game returns to when it exits.
+ * RetroAchievements, cloud-save and options buttons. An APK with the ROM and
+ * BIOS embedded shows a small launcher instead (PLAY, RetroAchievements,
+ * cloud saves, options), which the game returns to when it exits.
  *
  * Native stdout/stderr are redirected by gbarecomp to
  * files/android-runtime.log. If SDL_main returns or the previous native
@@ -70,6 +70,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         if (!launcherMode) {
             addRetroAchievementsButton();
             addCloudSavesButton();
+            addOptionsButton();
         }
     }
 
@@ -122,6 +123,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         if (launcherMode) return;
         addRetroAchievementsButton();
         addCloudSavesButton();
+        addOptionsButton();
     }
 
     // ── Launcher (embedded ROM/BIOS) ──────────────────────────────────────
@@ -153,8 +155,12 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
         cloudButton = launcherButton("", false);
         cloudButton.setOnClickListener(view -> cloudSaves.showSettings());
-        page.addView(cloudButton, column(dp(48), 0, 0, dp(14)));
+        page.addView(cloudButton, column(dp(48), 0, 0, dp(10)));
         refreshCloudButton();
+
+        Button optionsButton = launcherButton("Options", false);
+        optionsButton.setOnClickListener(view -> showOptionsDialog());
+        page.addView(optionsButton, column(dp(48), 0, 0, dp(14)));
 
         page.addView(label("START plays. Quitting the game returns here.", 13,
             Color.rgb(132, 143, 173)));
@@ -209,6 +215,52 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    // ── Options ───────────────────────────────────────────────────────────
+
+    private void addOptionsButton() {
+        Button button = addSetupButton(view -> showOptionsDialog());
+        if (button != null) button.setText("Options");
+    }
+
+    /**
+     * The runtime-menu settings the engine remembers across launches, so
+     * they can be set before playing. The others (volume, filter, FPS) last
+     * one session and stay in the in-game menu.
+     */
+    private void showOptionsDialog() {
+        if (org.libsdl.app.SdlSession.nativeRunning()) {
+            // It would overwrite config.ini with its own values on exit.
+            Toast.makeText(this, "The game is still closing. Try again in a moment.",
+                Toast.LENGTH_SHORT).show();
+            return;
+        }
+        EngineOptions options = new EngineOptions(getFilesDir());
+        String[][] keys = {{"Display", "integer_scale"}, {"Audio", "enhanced"}};
+        String[] labels = {
+            "Integer scaling: whole-pixel multiples, the sharpest picture",
+            "Enhanced audio: high-precision mix, without the 8-bit hiss",
+        };
+        boolean[] before = new boolean[keys.length];
+        for (int i = 0; i < keys.length; ++i) before[i] = options.get(keys[i][0], keys[i][1], false);
+        boolean[] chosen = before.clone();
+        new AlertDialog.Builder(this)
+            .setTitle("Options")
+            .setMultiChoiceItems(labels, chosen, (dialog, which, on) -> chosen[which] = on)
+            .setPositiveButton("Save", (dialog, which) -> {
+                try {
+                    // Only what changed: an untouched default stays the game's.
+                    for (int i = 0; i < keys.length; ++i) {
+                        if (chosen[i] != before[i]) options.set(keys[i][0], keys[i][1], chosen[i]);
+                    }
+                } catch (IOException error) {
+                    Toast.makeText(this, "Options not saved: " + error.getMessage(),
+                        Toast.LENGTH_LONG).show();
+                }
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
     }
 
     // ── RetroAchievements ─────────────────────────────────────────────────

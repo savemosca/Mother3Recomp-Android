@@ -1,7 +1,8 @@
 # MOTHER 3 HQ Audio patch vs the engine's MP2K shadow mixer
 
-Status: **analysed** (2026-10-15), EN 1.3 only; the shadow mixer is not yet
-tried on the RG556.
+Status: **shadow mixer adopted** (2026-10-15), EN 1.3 only. It is switched in
+the runtime menu (Audio > Enhanced audio, engine patch 0011), and on for the
+author's RG556.
 
 ## Question
 
@@ -70,12 +71,29 @@ JRickey/gba-recomp):
   still to be tuned.
 - It keeps the RetroAchievements-linked ROM.
 
-To try it on the device without rebuilding (see `android/README.md`, Session
-diagnostics):
+Engine patch 0011 adds a runtime-menu row, Audio > **Enhanced audio**:
 
-```sh
-adb shell "su -c 'echo GBARECOMP_AUDIO_SHADOW=1 > /data/data/com.ylports.mother3recomp.en.dev/files/debug-env.txt'"
-```
+- It appears only when the ROM links MP2K, and switches the shadow at runtime.
+- The choice is saved in `config.ini` `[Audio] enhanced` and wins over
+  `[audio] shadow`.
+- `GBARECOMP_AUDIO_SHADOW` (for example via `debug-env.txt`) still overrides
+  both.
+
+## Result on the RG556 (2026-10-15)
+
+- The player found the audio better, in overworld and in a battle.
+- First session, about 10 minutes, 35843 frames, including a battle:
+  - Two `DEGRADED` reverts, both within the first ~30 s after resuming a
+    suspend state: `correlation 0.07, level 1.21` and `0.19, 0.92`. There
+    were none after that.
+  - Hypothesis: the shadow starts from the just-loaded state before it is in
+    step with the driver.
+  - The engine does not log when the shadow goes live, so "live for the rest
+    of the session" is inferred: the verifier needed 4 passing ~1 s windows
+    after the second revert, and nothing reverted again.
+- Cost: the emulation thread used about 58% of one core. Health was
+  `late_frames=65 hitches=0 max_gap_ms=33.6 audio_dry_ms=0.0`; a 41939-frame
+  session without the shadow had 44 late frames.
 
 ## Unrelated finding: mono output
 
@@ -86,7 +104,9 @@ without either enhancement.
 
 ## Open questions
 
-- Does the shadow stay live through a whole MOTHER 3 session (battle music,
-  rhythm combos), or does it degrade? To be checked with the session log.
+- Log when the shadow goes live (engine), so that live time can be measured
+  rather than inferred.
+- Does it stay in step with the rhythm-combo timing? No problem was heard in
+  one battle.
 - What are the pools in the table at 0x08120E20? This only matters for the
   RetroAchievements request.
