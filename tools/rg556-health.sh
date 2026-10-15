@@ -73,6 +73,10 @@ summarize() {  # summarize <session dir>
   fi
   warn="$(grep -c -E "did not iret|SELF-HEAL bridge hit|abandoning|Aborting|abort|FATAL|failed" "$log" || true)"
   printf '%-16s %-22s %-40s %s warnings=%s\n' "$(basename "$dir")" "$end" "$cov" "$health" "$warn"
+  # Each hitch with the log line that follows it, and the uncounted stall
+  # before the app left the foreground (Android's transition, not the game).
+  { grep -A1 -E "host_window: hitch|not counted$" "$log" || true; } |
+    grep -v "^--$" | grep -v "device gyro input" | sed 's/^/    /'
 }
 
 echo "Collected into $SNAP"

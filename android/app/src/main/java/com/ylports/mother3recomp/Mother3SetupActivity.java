@@ -380,6 +380,11 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             .apply();
         // A normal quit needs no report; a crash never writes this line.
         if (text.contains("mother3: session ended, exit code 0\n")) return;
+        // Nor does a game the system killed while it was suspended in the
+        // background: the next PLAY resumes its suspend state.
+        String trimmed = text.trim();
+        String lastLine = trimmed.substring(trimmed.lastIndexOf('\n') + 1);
+        if (lastLine.startsWith("host_window: session_health (background)")) return;
 
         final String visible = lastLines(text, 45);
         new AlertDialog.Builder(this)

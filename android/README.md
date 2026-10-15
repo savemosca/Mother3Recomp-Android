@@ -129,6 +129,11 @@ system closes the game screen while the engine is still writing, the launcher
 waits up to 10 s for it before syncing; otherwise the next PLAY syncs. After a
 crash it shows the tail of `android-runtime.log`; a normal quit shows nothing.
 
+Home (or a frontend such as Daijishou) leaves the game suspended; opening the
+app again returns to it, not to the launcher. If the system closes the
+suspended game instead (memory, or swiped away from recents), the next PLAY
+resumes where it was (patch 0010).
+
 ## Session diagnostics
 
 Problems that do not crash the game are recorded at almost no cost, so they
@@ -138,7 +143,9 @@ can be found after playing:
   or the interpreted PCs) and a health line (engine patch 0008):
   `session_health ... late_frames hitches max_gap_ms audio_dry_ms
   audio_dropped_ms`. A frame is late after 25 ms, a hitch is a gap over
-  100 ms; the audio figures cover steady play only.
+  100 ms; the audio figures cover steady play only. Each hitch gets its own
+  line. The stall right before the app leaves the foreground (about 525 ms
+  when Home is pressed) is Android's transition, logged as "not counted".
 - Before each PLAY the launcher copies the previous session's log, coverage
   report and self-heal proposal to `files/sessions/<end time>/` (last 20).
 - `tools/rg556-health.sh` (adb + root) pulls them, plus Android's crash
@@ -147,3 +154,8 @@ can be found after playing:
 For a specific bug, `files/debug-env.txt` (created with `su`) sets engine
 variables such as `GBARECOMP_TRACE_ON_DISPATCH_MISS`; tracing slows the game,
 so delete the file afterwards.
+
+`GBARECOMP_AUDIO_SHADOW=1` in the same file turns on the engine's MP2K
+shadow mixer (float re-render without the 8-bit hiss; it reverts on
+divergence). Background, and why it is preferred to the MOTHER 3 HQ Audio
+ROM patch: `docs/re/hq-audio-patch.md`.
