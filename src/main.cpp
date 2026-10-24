@@ -55,7 +55,11 @@ namespace {
 //                    by the write/erase status polls, thousands of times per save
 //   ReadFlash_Core   0x08091218, 0x24 bytes, copied by 0x0809123C
 //   VerifyFlash_Core 0x080912D8, 0x30 bytes, copied by 0x0809130A, 0x080913A2
-// The slot moves with the call depth and is reused for other data, so fixed
+//   erase verify     0x0809184C, 0x24 bytes (checks a sector reads 0xFF),
+//                    referenced by 0x0809176C; found by the upstream port,
+//                    which also saw these copies in an EWRAM buffer
+// The slot (the stack in IWRAM, or an EWRAM buffer) moves with the call depth
+// and is reused for other data, so fixed
 // RAM entries would be unsafe, and every call ran on the interpreter bridge,
 // as did every IRQ return into a loop (the library times flash operations
 // with a timer IRQ): ~20 PCs at 0x03006C1C..0x03006D80 and about a million
@@ -75,6 +79,7 @@ constexpr StackRoutine kFlashStackRoutines[] = {
     {0x080911D4u, 0x04u, 0x02015E14u},  // ReadFlash1
     {0x08091218u, 0x24u, 0u},           // ReadFlash_Core
     {0x080912D8u, 0x30u, 0u},           // VerifyFlash_Core
+    {0x0809184Cu, 0x24u, 0u},           // erase verify (0xFF check)
 };
 
 bool ram_matches_rom(uint32_t ram, uint32_t rom, uint32_t size) {
@@ -86,7 +91,9 @@ bool ram_matches_rom(uint32_t ram, uint32_t rom, uint32_t size) {
 
 int mother3_ram_dispatch(uint32_t pc, int thumb) {
     pc &= ~1u;
-    if (!thumb || pc < 0x03000000u || pc >= 0x03008000u) return 0;
+    const bool iwram = pc >= 0x03000000u && pc < 0x03008000u;
+    const bool ewram = pc >= 0x02000000u && pc < 0x02040000u;
+    if (!thumb || !(iwram || ewram)) return 0;
     const uint16_t opcode = bus_read_u16(pc);
     for (const StackRoutine& routine : kFlashStackRoutines) {
         for (uint32_t offset = 0; offset < routine.size; offset += 2) {

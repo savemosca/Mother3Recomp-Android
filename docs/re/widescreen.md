@@ -38,7 +38,9 @@ On the Anbernic RG556 (1920x1080):
   development switches and can be set through `files/debug-env.txt` on
   Android.
 - A complete reference implementation for Pokémon Emerald, inherited in this
-  repo: `docs/WIDESCREEN_EXPERIMENT.md` and `src/emerald_*_view.cpp`.
+  repo until the 2026-10-24 merge with the upstream port, which removed
+  it: `docs/WIDESCREEN_EXPERIMENT.md` and `src/emerald_*_view.cpp` at commit
+  `d008c2b`.
 
 ## Why widening the view is not enough
 

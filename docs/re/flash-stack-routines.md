@@ -25,6 +25,7 @@ from there:
 | ReadFlash1 (`ldrb r0,[r0]; bx lr`) | 0x080911D4 | 4 | SetReadFlash1 0x080911D8 (buffer = caller's `sub sp`, 0x40/0x60) | through the pointer at 0x02015E14, by the program/erase status polls: thousands of times per save |
 | ReadFlash_Core | 0x08091218 | 0x24 | ReadFlash 0x0809123C (`sub sp, #0x80`) | once per read |
 | VerifyFlash_Core | 0x080912D8 | 0x30 | 0x0809130A, 0x080913A2 (`sub sp, #0x100`) | once per verify |
+| erase verify (0xFF check) | 0x0809184C | 0x24 | referenced at 0x0809176C | after a sector erase (added 2026-10-24) |
 
 Each caller jumps to `buffer | 1` through the `bx r3` helper at 0x08091940.
 The library also times flash operations with a timer IRQ, so IRQ returns
@@ -55,3 +56,23 @@ resumes stay native. Anything else falls through to normal dispatch.
 | none | 20 | ~1,100,000 |
 | ReadFlash_Core + VerifyFlash_Core | 6 (ReadFlash1 copies) | 81,948 |
 | + ReadFlash1 | 0 (`FULLY_STATIC`) | 0 |
+
+## Update 2026-10-24: a fourth routine, and EWRAM copies
+
+The upstream port (josiahg2502-glitch/Mother3Recomp-Android,
+`src/mother3_runtime_hooks.cpp`) lists a fourth library routine that runs
+from RAM: the erase verify at 0x0809184C, 0x24 bytes. It is
+`push {lr}; mov r2, r0`, then a loop that counts down a timeout (literal
+0x02015E20 inside the routine) while each byte reads 0xFF. The copier
+references it at 0x0809176C. The upstream port also saw the copies in an
+EWRAM buffer, not only on the IWRAM stack.
+
+`mother3_ram_dispatch` now:
+- includes the erase-verify routine;
+- accepts Thumb PCs in EWRAM (0x02000000..0x0203FFFF) as well as IWRAM;
+- keeps the same byte-exact match.
+
+The earlier sessions ended FULLY_STATIC with saves, so this path was rare or
+not reached. The routine was found by reading the upstream hook and the ROM,
+not from a miss here.
+

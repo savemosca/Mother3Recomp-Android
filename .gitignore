@@ -120,3 +120,11 @@ android/app/.cxx/
 
 # Session diagnostics pulled from a device by tools/rg556-health.sh
 /health/
+
+# Graph cache, Android outputs and signing material (from the upstream port)
+/graphify-out/
+android/build/
+android/app/build/
+*.p12
+*.keystore
+*-keystore.b64
