@@ -132,7 +132,9 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setGravity(Gravity.CENTER);
-        page.setBackgroundColor(Color.rgb(9, 11, 24));
+        // Pure black: on OLED panels such as the RG556 the background pixels
+        // are off, like the bars around the game (engine patch 0017).
+        page.setBackgroundColor(Color.BLACK);
         page.setPadding(dp(24), dp(16), dp(24), dp(16));
 
         TextView eyebrow = label("RECOMPILED FOR ANDROID", 12, Color.rgb(78, 216, 255));
