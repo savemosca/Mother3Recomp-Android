@@ -95,7 +95,7 @@ function(add_gba_variant TARGET NAME PORT WIN_TITLE GAME_NAME ROM_SHA1 ROM_CRC32
         "${VARIANT_DIR}/generated/*.c"
         "${VARIANT_DIR}/generated/*.cpp")
 
-    set(VARIANT_GAME_SOURCES src/main.cpp)
+    set(VARIANT_GAME_SOURCES src/main.cpp src/m3_widescreen.cpp)
 
     # Generated C/C++ is deliberately not committed because it is derived from
     # a copyrighted ROM.  A public checkout therefore boots through the

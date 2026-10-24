@@ -1,7 +1,45 @@
 # Widescreen: reveal more of the world instead of stretching
 
-Status: **assessment only** (2026-10-15). Not started, and nothing measured
-in MOTHER 3 yet. It also covers a later voxel 3D overworld.
+Status: **ported from upstream, 284x160** (2026-10-24); not yet tried on
+the RG556. The original assessment (2026-10-15) follows the section below.
+It also covers a later voxel 3D overworld.
+
+## Update 2026-10-24: upstream implemented it
+
+The upstream port moved to josiahg2502-glitch/Mother3Recomp, which ships 16:9
+widescreen: `src/m3_widescreen.cpp`, 354 lines, PolyForm Noncommercial (the
+same licence as this fork).
+- **Field:** the PPU asks for tilemap entries outside 240 px
+  (`g_ws_tilemap_provider`), and they are answered from the game's own
+  decompressed map in EWRAM at the live camera.
+  - English v1.3 addresses: camera 0x02001004, layer pointers 0x02005C5C,
+    16 px tile definitions 0x02009C88, map id 0x020281E4.
+  - The model is validated against the visible VRAM before it is trusted.
+- **Battles:** extended; the BG ring is reused.
+- **Sprites:** placed through `g_ws_obj_attr_x_provider`.
+- **Other screens:** pillarboxed (`g_ws_pillarbox`).
+
+The mstan engine has the same three hooks with identical signatures, so the
+file is ported unchanged, with a provenance notice. Wiring in this fork:
+- `src/main.cpp`:
+  - `max_view_width` and `widescreen_view_width` are 284;
+  - `--view-width 284` is added when config.ini [Launcher]
+    `m3_widescreen = 1` (upstream's key);
+  - `m3widescreen::tick()` runs from the per-frame observer, which now
+    chains RetroAchievements' frame.
+- Launcher Options: a "Widescreen" checkbox, applied at the next launch.
+
+On the RG556:
+- With the default height-filling layout, 284x160 at 6.75x is about
+  1917x1080, which nearly fills the panel.
+- With integer scaling (6x) it is 1704x960, with 108 px bars at the sides.
+- 320x180 would fill the panel at 6x, but upstream validated 284 only
+  (field model, battles, cutscene bars).
+
+To check on the device: the field, rooms, battles, cutscenes, map edges,
+and that RetroAchievements still runs (chained observer).
+
+## Original assessment (2026-10-15)
 
 ## Goal
 

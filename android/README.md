@@ -122,8 +122,9 @@ unencrypted on that network.
 
 An APK with the ROM and BIOS embedded opens a small launcher instead of
 starting the game at once: **PLAY**, **RetroAchievements**, **Cloud
-saves** and **Options**. Options sets, before playing, the runtime-menu
-settings the engine remembers in `config.ini`: integer scaling and enhanced
+saves** and **Options**. Options sets, before playing, widescreen (16:9;
+see `docs/re/widescreen.md`) and the runtime-menu settings the engine
+remembers in `config.ini`: integer scaling and enhanced
 audio. The others (volume, filter, FPS) last one session and stay in the
 in-game menu. The D-pad moves between them (the focused one has a yellow border),
 A selects, START plays from anywhere. To quit the game, open the runtime

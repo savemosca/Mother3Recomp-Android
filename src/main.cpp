@@ -41,6 +41,7 @@
 #include "game_launcher_boot.h"
 #endif
 
+#include "m3_widescreen.h"
 #if defined(MOTHER3_RETROACHIEVEMENTS)
 #include "retroachievements.h"
 #endif
@@ -87,6 +88,38 @@ bool ram_matches_rom(uint32_t ram, uint32_t rom, uint32_t size) {
         if (bus_read_u16(ram + i) != bus_read_u16(rom + i)) return false;
     }
     return true;
+}
+
+// Per-frame observer (RunOptions::vblank_frame has one owner): keeps the
+// widescreen field model current, then runs RetroAchievements' frame.
+void (*g_ra_vblank)() = nullptr;
+void mother3_vblank() {
+    m3widescreen::tick();  // throttles itself; nothing to do at 240 px
+    if (g_ra_vblank) g_ra_vblank();
+}
+
+// config.ini [Launcher] <key> = 1, the file the launcher's Options writes
+// (and the key upstream's launcher uses for the same setting).
+bool launcher_flag(const char* key) {
+    std::FILE* f = std::fopen("config.ini", "r");
+    if (!f) return false;
+    char line[256];
+    bool in_launcher = false, on = false;
+    const std::size_t key_len = std::strlen(key);
+    while (std::fgets(line, sizeof(line), f)) {
+        const char* s = line;
+        while (*s == ' ' || *s == '\t') ++s;
+        if (*s == '[') { in_launcher = std::strncmp(s, "[Launcher]", 10) == 0; continue; }
+        if (!in_launcher || std::strncmp(s, key, key_len) != 0) continue;
+        const char* v = s + key_len;
+        while (*v == ' ' || *v == '\t') ++v;
+        if (*v != '=') continue;
+        ++v;
+        while (*v == ' ' || *v == '\t') ++v;
+        on = *v == '1';
+    }
+    std::fclose(f);
+    return on;
 }
 
 int mother3_ram_dispatch(uint32_t pc, int thumb) {
@@ -198,9 +231,11 @@ int mother3_main(int argc, char** argv) {
         (sizeof(GBARECOMP_BOXART) > 1) ? GBARECOMP_BOXART : nullptr;
     opts.launcher_game_config = GBARECOMP_DEFAULT_GAME_CONFIG;
 
-    // MOTHER 3 is currently rendered at the native GBA 240x160 logical view.
-    // Host scaling is handled by SDL without changing guest state.
-    opts.max_view_width = 240;
+    // Native 240x160, or 284x160 (16:9) with widescreen on: the field is
+    // drawn from the game's own map (m3_widescreen, ported from upstream),
+    // battles are extended, other screens are pillarboxed.
+    opts.max_view_width = 284;
+    opts.widescreen_view_width = 284;
     opts.max_resize_view_width = 240;
     opts.max_resize_view_height = 160;
     opts.resize_driven_view = false;
@@ -227,6 +262,10 @@ int mother3_main(int argc, char** argv) {
     // No-op unless the setup screen stored RetroAchievements credentials.
     mother3::ra_install(opts, MOTHER3_ROM_FILE);
 #endif
+    g_ra_vblank = opts.vblank_frame;
+    opts.vblank_frame = &mother3_vblank;
+    if (launcher_flag("m3_widescreen"))
+        args.insert(args.begin() + 1, {"--view-width", "284"});
 
 #if !defined(MOTHER3_BOOTSTRAP_INTERP)
     // Needs the generated corpus; bootstrap builds interpret everything.

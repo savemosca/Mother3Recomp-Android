@@ -226,8 +226,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
     /**
      * The runtime-menu settings the engine remembers across launches, so
-     * they can be set before playing. The others (volume, filter, FPS) last
-     * one session and stay in the in-game menu.
+     * they can be set before playing, plus widescreen, which only takes
+     * effect at launch (config.ini [Launcher] m3_widescreen, read by
+     * main.cpp). The others (volume, filter, FPS) last one session and stay
+     * in the in-game menu.
      */
     private void showOptionsDialog() {
         if (org.libsdl.app.SdlSession.nativeRunning()) {
@@ -237,10 +239,12 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             return;
         }
         EngineOptions options = new EngineOptions(getFilesDir());
-        String[][] keys = {{"Display", "integer_scale"}, {"Audio", "enhanced"}};
+        String[][] keys = {
+            {"Display", "integer_scale"}, {"Audio", "enhanced"}, {"Launcher", "m3_widescreen"}};
         String[] labels = {
             "Integer scaling: whole-pixel multiples, the sharpest picture",
             "Enhanced audio: high-precision mix, without the 8-bit hiss",
+            "Widescreen: 16:9 field and battles, other screens pillarboxed",
         };
         boolean[] before = new boolean[keys.length];
         for (int i = 0; i < keys.length; ++i) before[i] = options.get(keys[i][0], keys[i][1], false);
