@@ -109,8 +109,11 @@ echo "Generating MOTHER 3 recompilation corpus..."
 )
 
 echo "Generating native BIOS corpus..."
+# The engine's BIOS config adds the entries the walker cannot find, notably
+# the IRQ wrapper tail at 0x138 (666 entries without it, 5143 with it).
 "$RECOMP" \
   --bios "$BIOS" \
+  --config "$ROOT/gbarecomp/bios/gba_bios.toml" \
   --out "$ROOT/gbarecomp/src/runtime/generated_bios"
 
 command -v gradle >/dev/null 2>&1 || {
