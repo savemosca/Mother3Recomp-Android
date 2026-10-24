@@ -29,6 +29,53 @@ Snapshot of unfinished work, 2026-10-25. Update or strike items as they close.
   unlocked), then repeat on `bnew` with one suspect disabled at a time.
 - Uninstall both when done (`adb uninstall <package>`).
 
+## 1b. Design review findings (2026-10-25)
+
+Ordered by impact on the player.
+
+1. **The suspend state is the de facto primary save, and it is fragile.**
+   On the device `mother3_en.sav` dates from 2026-10-15; everything since
+   lives only in `mother3_en.suspend.state`. That state is tied to the
+   engine build and the exact ROM bytes (josiah's app rejects it because HQ
+   audio changes the ROM SHA-1), it is not part of the cloud sync, and a
+   cloud download deletes the resume marker (`CloudSaves.runSync`), so the
+   game silently boots from the older `.sav` (the state file stays on disk).
+   Ideas: keep the last N suspend states, sync the state as a second file,
+   warn when the `.sav` is much older than the state, verify the state loads
+   before shipping an engine update.
+2. **`m3widescreen` reads the map through the emulated bus per margin
+   pixel.** `void_width` → `in_room` → `void_cell` (up to 36 `bus_read_*`
+   per 16 px cell) runs for each of the 2x22 margin pixels on 160 lines; the
+   cache (`black_width`) resets whenever the camera moves, i.e. every frame
+   while walking. Map data does not change while walking: cache `void_cell`
+   per (map, cell) and read EWRAM through `ewram_ptr()` instead of the bus.
+   Profile: `bus_read_u16` 15 %, `GbaBus::read16` 7 % of the game thread.
+3. **`mother3_ram_dispatch` re-reads constant ROM on every call.** For each
+   dispatch into RAM code it compares the opcode with ~60 ROM halfwords read
+   through the bus. Cache the four routines' ROM bytes once; only the opcode
+   at `pc` needs a bus read. The 7bb70ec engine also verifies its own RAM
+   templates first (`lookup_native_ram`), so the per-dispatch cost grew.
+4. **The engine patch stack is the weak point of every engine update.** 18
+   patches; 7 touch `runtime.cpp`, 7 `host_window.cpp`, 5 `gba_audio.cpp`.
+   The 2026-10-24 merge put the pacer deadline update in two places (game at
+   30 fps). Mitigations: get #44-#50 merged upstream, and gate each engine
+   bump on `ctest` plus `tools/rg556-idle-bench.sh` against the previous
+   build.
+5. **Always-on diagnostic replay (upstream 6076e7b)** fingerprints state
+   every frame and checkpoints periodically; measured ~0.4 points of late
+   frames in the test app. Consider defaulting it off on Android.
+6. Minor: `tools/build-android-ci.yml` (inherited, inactive) carries a
+   keystore password in plain text (the key itself was never committed;
+   delete the file); `build-android.sh` embeds the ROM by default (output
+   named `*-PRIVATE-rom-included.apk`); RetroAchievements unlocks earned
+   offline are lost if the game is quit before reconnecting.
+
+Sound parts (keep): RetroAchievements threading (network worker, callbacks
+on the game thread, atomic sidecar), the three-way cloud sync with backups
+and checksums, atomic `config.ini` writes that keep unknown keys, engine
+patches free of MOTHER 3 special cases, build script guards against
+edited engine files.
+
 ## 2. Strategy C: josiahg2502-glitch/Mother3Recomp on mstan's engine
 
 Phase 1 (engine), done on desktop, not pushed:
