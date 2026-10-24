@@ -1,0 +1,115 @@
+From e7fc223cd3d86cb8cef8d5fdda0d8b903b3b1608 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 22:08:25 +0200
+Subject: [PATCH] FramePacer: repay time lost to late frames in small slices
+
+A frame that wakes more than 1.5 ms late starts a fresh full period, so
+there is never a visibly short recovery frame (86acb8b). One more than a
+whole frame late resyncs. Both drop the lost time for good, so every
+late frame leaves the emulation, and the audio it produces, a little
+behind real time. The audio bridge's servo absorbs at most 0.5%.
+
+Measured on an Anbernic RG556 (MOTHER 3, 60 s, GBARECOMP_AUDIO_PROBE):
+- 36 late frames.
+- 3605 frames (60.36 s of audio) in about 61.5 s of playback, about 2%
+  behind.
+- The bridge fill sank below its 40 ms target with the correction
+  pinned at -0.500%.
+- The bridge filled 338 underrun stretches, 1386 ms of looped audio in a
+  minute, heard as occasional crackle. The session health line does not
+  count these (audio_dry_ms stays 0).
+
+The pacer now keeps a debt of the lost time, capped at 100 ms; beyond
+that it is a hitch and is dropped as before. It repays the debt on
+on-time frames with a period shortened by at most 1/16, about 1 ms. A 6%
+shorter frame is not the short/long pair the full payback produced, and
+it repays up to about 60 ms of lost time per second. reset() clears the
+debt, so startup, resume and state loads still owe nothing.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/runtime/host_platform.cpp | 30 ++++++++++++++++++++++++++++--
+ src/runtime/host_platform.h   |  4 ++++
+ 2 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/src/runtime/host_platform.cpp b/src/runtime/host_platform.cpp
+index 99c7813..c70c2a3 100644
+--- a/src/runtime/host_platform.cpp
++++ b/src/runtime/host_platform.cpp
+@@ -1,5 +1,7 @@
+ #include "host_platform.h"
+ 
++#include <algorithm>
++
+ #include <cstdio>
+ #include <thread>
+ 
+@@ -48,8 +50,19 @@ FramePacer::~FramePacer() {
+ 
+ void FramePacer::reset() {
+     next_ = clock::now() + period_;
++    debt_ = std::chrono::nanoseconds(0);  // a deliberate jump owes nothing
+ }
+ 
++namespace {
++// Late time above this is a hitch (load, pause), not drift: dropped, as
++// before. Below it, the time is owed and repaid.
++constexpr auto kMaxDebt = std::chrono::milliseconds(100);
++// Repayment per frame: 1/16 of the period (~1 ms at 59.73 Hz). A 6% shorter
++// frame is not the visible short/long pair the full payback produced, and it
++// repays up to ~60 ms of lost time per second.
++constexpr int kRepayDivisor = 16;
++}  // namespace
++
+ void FramePacer::wait_for_next_frame() {
+     if (uncapped_) {
+         next_ = clock::now();  // keep the deadline current for re-cap
+@@ -60,6 +73,9 @@ void FramePacer::wait_for_next_frame() {
+     // of trying to replay the lost time (avoids a catch-up death spiral
+     // after a hitch or a breakpoint pause).
+     if (now > next_ + period_) {
++        debt_ = std::min<std::chrono::nanoseconds>(
++            debt_ + std::chrono::duration_cast<std::chrono::nanoseconds>(now - next_),
++            kMaxDebt);
+         next_ = now + period_;
+         return;
+     }
+@@ -103,8 +119,18 @@ void FramePacer::wait_for_next_frame() {
+     // period instead of producing a visibly short recovery frame.
+     const clock::time_point woke = clock::now();
+     constexpr auto kLateTolerance = std::chrono::microseconds(1500);
+-    next_ = woke > next_ + kLateTolerance ? woke + period_
+-                                          : next_ + period_;
++    if (woke > next_ + kLateTolerance) {
++        // Late: start a fresh full period, but remember the lost time.
++        debt_ = std::min<std::chrono::nanoseconds>(
++            debt_ + std::chrono::duration_cast<std::chrono::nanoseconds>(woke - next_),
++            kMaxDebt);
++        next_ = woke + period_;
++    } else {
++        // On time: repay a slice of the debt with a slightly shorter period.
++        const auto repay = std::min<std::chrono::nanoseconds>(debt_, period_ / kRepayDivisor);
++        debt_ -= repay;
++        next_ = next_ + period_ - repay;
++    }
+ }
+ 
+ std::vector<unsigned char> read_file(const std::string& path, std::string* error) {
+diff --git a/src/runtime/host_platform.h b/src/runtime/host_platform.h
+index 2b48ab3..97336e0 100644
+--- a/src/runtime/host_platform.h
++++ b/src/runtime/host_platform.h
+@@ -56,6 +56,10 @@ private:
+     using clock = std::chrono::steady_clock;
+     std::chrono::nanoseconds period_{};
+     clock::time_point next_{};
++    // Time lost to late frames, repaid in small slices so the emulation
++    // stays real-time on average (audio production would otherwise fall
++    // behind the host's audio clock) without a visibly short frame.
++    std::chrono::nanoseconds debt_{0};
+     bool uncapped_ = false;
+     bool raised_timer_res_ = false;
+     // HP-002: Windows high-resolution waitable timer (HANDLE, void* here to
+-- 
+2.56.0
+
