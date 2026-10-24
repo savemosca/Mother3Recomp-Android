@@ -1,4 +1,4 @@
-From 7a49d3647fbef1ae122036d1ab5ea002008d7017 Mon Sep 17 00:00:00 2001
+From a71f3d77199a9fa6f30d1e5ed08d1b50d15cca1b Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 21:00:27 +0200
 Subject: [PATCH] Android: "Quit game" in the runtime menu
@@ -17,10 +17,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 16 insertions(+), 1 deletion(-)
 
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index 368d57e..a93d85e 100644
+index e66df62..b448bb8 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
-@@ -258,6 +258,7 @@ struct RuntimeUiContext {
+@@ -270,6 +270,7 @@ struct RuntimeUiContext {
      int pending_save_slot = 0;
      int pending_load_slot = 0;
      bool pending_rewind = false;
@@ -28,7 +28,7 @@ index 368d57e..a93d85e 100644
      bool assist_tools_exposed = false;
      bool assist_tools_enabled = true;
      bool fast_forward_latched = false;
-@@ -360,6 +361,11 @@ int runtime_ui_action(void* opaque, const RecompRuntimeUiItem* item) {
+@@ -376,6 +377,11 @@ int runtime_ui_action(void* opaque, const RecompRuntimeUiItem* item) {
          recomp_runtime_ui_close(c->ui);
          return 1;
      }
@@ -40,7 +40,7 @@ index 368d57e..a93d85e 100644
      if (c->opts && c->opts->ui_action) return c->opts->ui_action(item->key);
      return 0;
  }
-@@ -3021,7 +3027,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3211,7 +3217,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
          // fractional mode for a toggle to switch off. Android's full-screen
          // layout does fill the display fractionally, so it offers the choice.
  #if defined(__ANDROID__)
@@ -54,7 +54,7 @@ index 368d57e..a93d85e 100644
  #else
          runtime_ui_config.features |=
              RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN |
-@@ -3598,6 +3609,10 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3807,6 +3818,10 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
              ev.load_slot = runtime_ui_context.pending_load_slot;
              runtime_ui_context.pending_load_slot = 0;
          }

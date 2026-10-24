@@ -1,4 +1,4 @@
-From f1fc359b59879f9c6c83c8b581f6e201e0d74dc3 Mon Sep 17 00:00:00 2001
+From c34ce020bdcb1c289327f8180b8eca269a6a9ee5 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 17:52:46 +0200
 Subject: [PATCH] Android: letterbox the game in pure black
@@ -19,10 +19,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index 7c51aff..654259e 100644
+index 0c18cb3..5d9b805 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
-@@ -1912,7 +1912,7 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+@@ -1918,7 +1918,7 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
      // Mobile presentation owns the whole drawable: a centered integer-scaled
      // game viewport plus dedicated side rails for touch controls.
      SDL_RenderSetLogicalSize(b->renderer, 0, 0);
@@ -31,10 +31,10 @@ index 7c51aff..654259e 100644
  #else
      if (b->expanded_view || b->resize_driven_view) {
          // The destination viewport is computed explicitly in present() so
-@@ -2405,7 +2405,14 @@ void HostWindow::present(const uint8_t* rgb888) {
+@@ -2473,7 +2473,14 @@ void HostWindow::present(const uint8_t* rgb888, unsigned sampled_w, unsigned sam
          rgb888 = b->graded_fb.data();
      }
-     SDL_UpdateTexture(b->texture, nullptr, rgb888, b->base_w * 3);
+     SDL_UpdateTexture(b->texture, nullptr, rgb888, texture_w * 3);
 +#if defined(__ANDROID__)
 +    // Pure black around the game: on OLED panels (common on Android phones
 +    // and handhelds such as the RG556) those pixels are then off, not a dim

@@ -1,8 +1,8 @@
-From e27d934639fa95494095a6691a84c79a970d9321 Mon Sep 17 00:00:00 2001
+From a9d64bb896322e7bffab321455262498d4d75fa9 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 21:24:37 +0200
-Subject: [PATCH 1/3] HostWindow: session health line (late frames, stalls,
- audio gaps)
+Subject: [PATCH] HostWindow: session health line (late frames, stalls, audio
+ gaps)
 
 Invisible problems (dropped frames, short stalls, audio crackle) left no
 trace unless a probe had been switched on beforehand. Count them all the
@@ -32,10 +32,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 109 insertions(+), 1 deletion(-)
 
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index 7f992a0..228fdcb 100644
+index c0b00b1..b2573a8 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
-@@ -415,6 +415,29 @@ struct Backend {
+@@ -418,6 +418,29 @@ struct Backend {
      uint64_t      audio_direct_pushes = 0;
      uint64_t      audio_direct_samples = 0;
      uint64_t      audio_direct_underruns = 0;
@@ -65,7 +65,7 @@ index 7f992a0..228fdcb 100644
      uint64_t      audio_direct_probe_samples = 0;
      uint64_t      audio_direct_probe_nonzero = 0;
      long double   audio_direct_probe_square_sum = 0.0;
-@@ -2177,11 +2200,94 @@ void HostWindow::set_title(const char* title) {
+@@ -2183,11 +2206,94 @@ void HostWindow::set_title(const char* title) {
      SDL_SetWindowTitle(b->window,title);
  }
  
@@ -160,15 +160,15 @@ index 7f992a0..228fdcb 100644
      if (b->bridge_ready) rab_free(&b->bridge);
      if (b->audio_mtx) SDL_DestroyMutex(b->audio_mtx);
      close_game_controller(b);
-@@ -2265,6 +2371,7 @@ bool HostWindow::drawable_size(int* width, int* height) const {
- void HostWindow::present(const uint8_t* rgb888) {
+@@ -2284,6 +2390,7 @@ void HostWindow::present(const uint8_t* rgb888) { present(rgb888, 0, 0); }
+ void HostWindow::present(const uint8_t* rgb888, unsigned sampled_w, unsigned sampled_h) {
      if (!open_ || !impl_ || !rgb888) return;
      auto* b = static_cast<Backend*>(impl_);
 +    note_present_for_health(b);
-     // Present-time color grading (opt-in). Raw is passthrough: the raw
-     // PPU frame is uploaded untouched, so verify/frame-hash are unaffected.
-     if (b->color_lut && !b->color_lut->is_passthrough() &&
-@@ -2692,7 +2799,7 @@ bool HostWindow::wait_for_foreground() {
+     if (!sampled_w) sampled_w = unsigned(b->base_w);
+     if (!sampled_h) sampled_h = unsigned(b->base_h);
+     int texture_w = 0, texture_h = 0;
+@@ -2765,7 +2872,7 @@ bool HostWindow::wait_for_foreground() {
      if (!open_ || !impl_) return false;
      auto* b = static_cast<Backend*>(impl_);
      std::fprintf(stderr, "host_window: background — emulation suspended\n");
@@ -177,7 +177,7 @@ index 7f992a0..228fdcb 100644
      if (b->audio_dev) SDL_PauseAudioDevice(b->audio_dev, 1);
      TouchHub::instance().cancel_all(touch_clock_ms());
      clear_touches(b);
-@@ -2706,6 +2813,7 @@ bool HostWindow::wait_for_foreground() {
+@@ -2779,6 +2886,7 @@ bool HostWindow::wait_for_foreground() {
          }
      }
      b->backgrounded = false;

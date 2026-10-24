@@ -1,4 +1,4 @@
-From 15e0049b4e13816ac6dc7d5240726830bb4b18b1 Mon Sep 17 00:00:00 2001
+From 5c420fa0d6eef8e75a2fdca9acdb3af59756121c Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 17:29:07 +0200
 Subject: [PATCH] GbaAudio: mid-event catch-up samples go through the MP2K

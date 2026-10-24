@@ -1,8 +1,8 @@
-From d01c681c7a1cb53c98c4fabb813d5ab7f0e35bad Mon Sep 17 00:00:00 2001
+From 63d149cdb3886472a8109cf3186922ff9c2b942e Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 11:33:59 +0200
-Subject: [PATCH 3/3] Android: keep the suspend state when a session ends in
- the background
+Subject: [PATCH] Android: keep the suspend state when a session ends in the
+ background
 
 On Android the process outlives a game session. When the Activity was
 destroyed while the game was suspended in the background (the task
@@ -33,10 +33,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 18 insertions(+), 2 deletions(-)
 
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index e368024..8420c9a 100644
+index 0090609..fcd6fc3 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
-@@ -2314,6 +2314,13 @@ void HostWindow::close() {
+@@ -2320,6 +2320,13 @@ void HostWindow::close() {
      delete b;
      impl_ = nullptr;
      open_ = false;
@@ -51,10 +51,10 @@ index e368024..8420c9a 100644
  
  bool HostWindow::set_surface_size(int base_w, int base_h) {
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index a93d85e..2b168ae 100644
+index b448bb8..7dbee98 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
-@@ -3515,12 +3515,17 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3720,12 +3720,17 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                        ppu.frame_count());
              std::string e;
              const std::string state_path = suspend_state_path();
@@ -74,7 +74,7 @@ index a93d85e..2b168ae 100644
              std::fprintf(stderr,
                           "[gbarecomp:runtime] %s: save=%s suspend_state=%s%s%s\n",
                           ev.terminating ? "terminating" : "entering background",
-@@ -3534,7 +3539,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3739,7 +3744,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                      clear_suspend_marker();
                      if (pacer) pacer->reset();
                  } else {

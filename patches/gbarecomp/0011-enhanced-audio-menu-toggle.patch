@@ -1,4 +1,4 @@
-From 130a74405ded44a1afa94d7ea1d57fa89782f77c Mon Sep 17 00:00:00 2001
+From dda9e686966639a290a4bae99a9319efd2bc1ecb Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 12:00:11 +0200
 Subject: [PATCH] Runtime menu: "Enhanced audio" toggle for the MP2K shadow
@@ -86,10 +86,10 @@ index cdd0d27..aec5853 100644
      bool       shadow_enabled_ = false;
      uint64_t   shadow_cursor_ = 0;          // running grid-sample count
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index 8420c9a..7c51aff 100644
+index fcd6fc3..0c18cb3 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
-@@ -385,6 +385,9 @@ struct Backend {
+@@ -388,6 +388,9 @@ struct Backend {
      // Whole-multiple presentation; saved = the player chose it in the menu.
      bool integer_scale = false;
      bool integer_scale_saved = false;
@@ -99,7 +99,7 @@ index 8420c9a..7c51aff 100644
      bool touch_emulation = false;   // desktop mouse -> touch
      float px_per_mm = 96.0f / 25.4f;
      float logical_px_per_mm = 96.0f / 25.4f;  // SDL-reported (logical) density
-@@ -1170,7 +1173,8 @@ void save_touch_config(const Backend* b) {
+@@ -1176,7 +1179,8 @@ void save_touch_config(const Backend* b) {
              const bool header = s != std::string::npos && line[s] == '[';
              if (header)
                  in_section = line.compare(s, 7, "[Touch]") == 0 ||
@@ -109,7 +109,7 @@ index 8420c9a..7c51aff 100644
              if (in_section) continue;
              kept.push_back(line);
          }
-@@ -1191,6 +1195,10 @@ void save_touch_config(const Backend* b) {
+@@ -1197,6 +1201,10 @@ void save_touch_config(const Backend* b) {
          f << "\n[Display]\n";
          f << "integer_scale = " << (b->integer_scale ? 1 : 0) << "\n";
      }
@@ -120,7 +120,7 @@ index 8420c9a..7c51aff 100644
  }
  
  // GBA KEYINPUT bit order: 0=A 1=B 2=Sel 3=Sta 4=Right 5=Left 6=Up 7=Down 8=R 9=L.
-@@ -2749,6 +2757,29 @@ void HostWindow::set_touch_config_dir(const char* dir) {
+@@ -2822,6 +2830,29 @@ void HostWindow::set_touch_config_dir(const char* dir) {
              b->integer_scale_saved = true;
          }
      });
@@ -150,7 +150,7 @@ index 8420c9a..7c51aff 100644
  }
  
  void HostWindow::set_integer_scale(bool enabled, bool persist) {
-@@ -3304,6 +3335,8 @@ int  HostWindow::window_scale() const { return 1; }
+@@ -3378,6 +3409,8 @@ int  HostWindow::window_scale() const { return 1; }
  void HostWindow::set_linear_filter(bool /*enabled*/) {}
  bool HostWindow::linear_filter() const { return false; }
  void HostWindow::set_integer_scale(bool /*enabled*/, bool /*persist*/) {}
@@ -160,7 +160,7 @@ index 8420c9a..7c51aff 100644
  void HostWindow::set_audio_enabled(bool /*enabled*/) {}
  bool HostWindow::audio_enabled() const { return false; }
 diff --git a/src/runtime/host_window.h b/src/runtime/host_window.h
-index 1f4564b..699f57d 100644
+index 670d2a2..ce61af7 100644
 --- a/src/runtime/host_window.h
 +++ b/src/runtime/host_window.h
 @@ -104,6 +104,11 @@ public:
@@ -176,10 +176,10 @@ index 1f4564b..699f57d 100644
      bool audio_enabled() const;
      void set_resize_driven_view(bool enabled);
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index 2b168ae..6df5fc0 100644
+index 7dbee98..c6aaa4b 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
-@@ -244,9 +244,11 @@ struct Args {
+@@ -255,9 +255,11 @@ struct Args {
  #define GBARECOMP_UI_KEY_FAST_FORWARD   "assist.fast_forward"
  #define GBARECOMP_UI_KEY_FAST_FORWARD_SPEED "assist.fast_forward_speed"
  #define GBARECOMP_UI_KEY_REWIND          "assist.rewind"
@@ -190,8 +190,8 @@ index 2b168ae..6df5fc0 100644
 +    gba::GbaAudio* audio = nullptr;
      RecompRuntimeUi* ui = nullptr;
      float* gyro_sensitivity = nullptr;
-     int view_mode = RECOMP_RUNTIME_UI_VIEW_NATIVE;
-@@ -279,6 +281,8 @@ int runtime_ui_get(void* opaque, const RecompRuntimeUiItem* item, int* out) {
+     int* internal_resolution = nullptr;
+@@ -293,6 +295,8 @@ int runtime_ui_get(void* opaque, const RecompRuntimeUiItem* item, int* out) {
      else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VOLUME) == 0) *out = c->window->volume();
      else if (std::strcmp(item->key, GBARECOMP_UI_KEY_STATE_SLOT) == 0) *out = c->state_slot;
      else if (std::strcmp(item->key, GBARECOMP_UI_KEY_FPS) == 0) *out = c->window->fps_readout();
@@ -200,7 +200,7 @@ index 2b168ae..6df5fc0 100644
      else if (std::strcmp(item->key, GBARECOMP_UI_KEY_ASSIST_ENABLED) == 0)
          *out = c->assist_tools_enabled;
      else if (std::strcmp(item->key, GBARECOMP_UI_KEY_FAST_FORWARD) == 0)
-@@ -317,6 +321,10 @@ int runtime_ui_set(void* opaque, const RecompRuntimeUiItem* item, int value) {
+@@ -333,6 +337,10 @@ int runtime_ui_set(void* opaque, const RecompRuntimeUiItem* item, int value) {
          c->state_slot = std::clamp(value, 1, c->state_slot_count);
      else if (std::strcmp(item->key, GBARECOMP_UI_KEY_FPS) == 0)
          c->window->set_fps_readout(value != 0);
@@ -211,7 +211,7 @@ index 2b168ae..6df5fc0 100644
      else if (std::strcmp(item->key, GBARECOMP_UI_KEY_ASSIST_ENABLED) == 0) {
          c->assist_tools_enabled = value != 0;
          if (!c->assist_tools_enabled) c->fast_forward_latched = false;
-@@ -2923,6 +2931,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3094,6 +3102,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                                  opts.touch_pad_default, args.touch_emulation);
              win.set_integer_scale(args.integer_scale, /*persist=*/false);
              win.set_touch_config_dir(exe_dir.c_str());
@@ -224,7 +224,7 @@ index 2b168ae..6df5fc0 100644
          }
          win.set_host_overlay(opts.host_overlay);
          win.set_view_margins(ppu.view_extra_left(), ppu.view_extra_right(),
-@@ -2969,6 +2983,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3140,6 +3154,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
          win.set_fps_readout(opts.show_fps_by_default);
  #if defined(GBARECOMP_RUNTIME_UI)
          runtime_ui_context.window = &win;
@@ -232,7 +232,7 @@ index 2b168ae..6df5fc0 100644
          runtime_ui_context.gyro_sensitivity = &args.gyro_sensitivity;
          runtime_ui_context.assist_tools_exposed = opts.expose_assist_tools;
          runtime_ui_context.assist_tools_enabled =
-@@ -3132,6 +3147,17 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3322,6 +3337,17 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
              }
          }
  

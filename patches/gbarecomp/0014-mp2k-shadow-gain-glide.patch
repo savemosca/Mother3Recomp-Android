@@ -1,4 +1,4 @@
-From d8e2d77a71db63b59e274ff6022c448da52c6a5d Mon Sep 17 00:00:00 2001
+From a9bd72bd92dc4861cd0e231e48d5f90351c8a20a Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 16:13:02 +0200
 Subject: [PATCH] MP2K shadow: glide output gains instead of stepping them

@@ -1,4 +1,4 @@
-From 2c6e70fc9aa4456f4da0bc2320431d3ef24e7ad7 Mon Sep 17 00:00:00 2001
+From 7801bfba21a97d74d7ace99fb30f8a7cccd2434a Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 19:57:12 +0200
 Subject: [PATCH] Self-heal bridge: stop an IRQ continuation at its own iret
@@ -34,7 +34,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 20 insertions(+)
 
 diff --git a/src/runtime/runtime_arm_default_aborts.cpp b/src/runtime/runtime_arm_default_aborts.cpp
-index 4b16bf4..06a70e5 100644
+index ea6916d..e0a37a6 100644
 --- a/src/runtime/runtime_arm_default_aborts.cpp
 +++ b/src/runtime/runtime_arm_default_aborts.cpp
 @@ -26,6 +26,7 @@
@@ -45,7 +45,7 @@ index 4b16bf4..06a70e5 100644
  #include "mod_function_hooks.h"
  #include "symbol_lookup.h"
  #include "self_heal.h"
-@@ -423,6 +424,7 @@ extern "C" const char* g_tick_ctx;
+@@ -433,6 +434,7 @@ extern "C" const char* g_tick_ctx;
  // runtime_irq() (g_call_return_floor): the floor keeps the cancel cascade from
  // corrupting mainline frames; this keeps the self-heal bridge from bailing early.
  extern "C" uint32_t g_irq_nest_depth;
@@ -53,9 +53,9 @@ index 4b16bf4..06a70e5 100644
  
  // runtime_bridge_interpret — the interpret-the-missed-subtree core, factored out
  // of runtime_dispatch_miss so the P6 sljit differential gate can reuse it as its
-@@ -624,6 +626,24 @@ extern "C" int runtime_bridge_interpret(uint32_t entry_pc, bool entry_thumb,
- 
-         if (!irq_cont && (cpu.R[15] & ~1u) == stop_pc) break;
+@@ -675,6 +677,24 @@ extern "C" int runtime_bridge_interpret(uint32_t entry_pc, bool entry_thumb,
+             }
+         }
  
 +        // An IRQ continuation ends at its own iret. runtime_irq() was entered
 +        // from the interrupted code's runtime_tick and returns into it, so that

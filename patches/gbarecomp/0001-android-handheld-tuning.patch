@@ -1,4 +1,4 @@
-From a8eaecb9e95d2d8033ef443f97f948143cdbda7e Mon Sep 17 00:00:00 2001
+From a69c273e8e0344c90a25806dc6488622dc2f9631 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Tue, 13 Oct 2026 23:38:09 +0200
 Subject: [PATCH] Android handheld tuning: full-screen sharp scaling, audio
@@ -18,15 +18,15 @@ Subject: [PATCH] Android handheld tuning: full-screen sharp scaling, audio
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/runtime/host_window.cpp     | 107 ++++++++++++++++++++------------
+ src/runtime/host_window.cpp     | 110 +++++++++++++++++++++-----------
  src/runtime/mobile_platform.cpp |  55 ++++++++++++++++
- 2 files changed, 123 insertions(+), 39 deletions(-)
+ 2 files changed, 126 insertions(+), 39 deletions(-)
 
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index 712c1bb..4a0834a 100644
+index 45b0502..7cd986c 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
-@@ -528,6 +528,38 @@ bool ensure_sharp_texture(Backend* b, int factor) {
+@@ -531,6 +531,41 @@ bool ensure_sharp_texture(Backend* b, int factor) {
      return true;
  }
  
@@ -34,12 +34,15 @@ index 712c1bb..4a0834a 100644
 +// non-integer destination (e.g. 6.75x on a 1080p handheld) is prescaled with
 +// nearest to the largest integer multiple and finished with linear, so pixel
 +// columns stay even without blurring.
-+void copy_game_texture(Backend* b, const PresentationLayout& layout) {
++// The prescale applies to native-resolution sources only (`native_source`);
++// high-resolution presentation surfaces take the nearest path.
++void copy_game_texture(Backend* b, const PresentationLayout& layout,
++                       bool native_source) {
 +    if (layout.width <= 0 || layout.height <= 0) return;
 +    const SDL_Rect destination = {
 +        layout.x, layout.y, layout.width, layout.height};
 +    bool sharp_presented = false;
-+    const int sharp_factor = b->sharp_filter
++    const int sharp_factor = b->sharp_filter && native_source
 +        ? compute_sharp_prescale_factor(layout, b->base_w, b->base_h)
 +        : 0;
 +    if (sharp_factor > 0 &&
@@ -65,7 +68,7 @@ index 712c1bb..4a0834a 100644
  void close_game_controller(Backend* b) {
      if (!b || !b->controller) return;
  #if SDL_VERSION_ATLEAST(2, 0, 14)
-@@ -1279,6 +1311,17 @@ runtime::ColorSettings resolve_color_settings(const char* toml_screen) {
+@@ -1282,6 +1317,17 @@ runtime::ColorSettings resolve_color_settings(const char* toml_screen) {
      return s;
  }
  
@@ -83,7 +86,7 @@ index 712c1bb..4a0834a 100644
  // SDL audio pull callback: render exactly `len` bytes of device-rate mono S16
  // from the bridge ring. The bridge emits faded silence (not raw zeros) before
  // prime / on underrun, so a momentarily-starved producer no longer clicks.
-@@ -1413,9 +1456,13 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
+@@ -1416,9 +1462,13 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
          SDL_GetWindowSize(b->window, &drawable_w, &drawable_h);
      }
      PresentationLayout layout{};
@@ -98,7 +101,7 @@ index 712c1bb..4a0834a 100644
          layout = compute_adaptive_presentation_layout(drawable_w, drawable_h,
                                                        b->base_w, b->base_h);
      } else {
-@@ -1874,7 +1921,8 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+@@ -1877,7 +1927,8 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
      want.freq     = 65536;
      want.format   = AUDIO_S16SYS;
      want.channels = 1;
@@ -108,7 +111,7 @@ index 712c1bb..4a0834a 100644
      const char* direct_audio_env = std::getenv("GBARECOMP_AUDIO_DIRECT");
      b->audio_direct =
          direct_audio_env && *direct_audio_env && *direct_audio_env != '0';
-@@ -1922,10 +1970,20 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+@@ -1925,10 +1976,20 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
              cfg.channels    = 1;
              cfg.source_rate = 65536.0;                 // engine's standardized GBA mixer rate
              cfg.host_rate   = static_cast<double>(got.freq);
@@ -132,13 +135,13 @@ index 712c1bb..4a0834a 100644
              SDL_PauseAudioDevice(b->audio_dev, 0);      // start the callback
          }
      }
-@@ -2263,43 +2321,12 @@ void HostWindow::present(const uint8_t* rgb888) {
+@@ -2328,43 +2389,12 @@ void HostWindow::present(const uint8_t* rgb888, unsigned sampled_w, unsigned sam
      }
      if (touch_input_enabled(b)) publish_touch_presentation(b);
  #if defined(__ANDROID__)
 -    const SDL_Rect destination{layout.x, layout.y, layout.width, layout.height};
 -    SDL_RenderCopy(b->renderer, b->texture, nullptr, &destination);
-+    copy_game_texture(b, layout);
++    copy_game_texture(b, layout, sampled_w == unsigned(b->base_w) && sampled_h == unsigned(b->base_h));
  #else
      if (!b->expanded_view && !b->resize_driven_view) {
          SDL_RenderCopy(b->renderer, b->texture, nullptr, nullptr);
@@ -147,7 +150,7 @@ index 712c1bb..4a0834a 100644
 -            const SDL_Rect destination = {
 -                layout.x, layout.y, layout.width, layout.height};
 -            bool sharp_presented = false;
--            const int sharp_factor = b->sharp_filter
+-            const int sharp_factor = b->sharp_filter && sampled_w == unsigned(b->base_w) && sampled_h == unsigned(b->base_h)
 -                ? compute_sharp_prescale_factor(
 -                      layout, b->base_w, b->base_h)
 -                : 0;
@@ -174,11 +177,11 @@ index 712c1bb..4a0834a 100644
 -                    b->renderer, b->texture, nullptr, &destination);
 -            }
 -        }
-+        copy_game_texture(b, layout);
++        copy_game_texture(b, layout, sampled_w == unsigned(b->base_w) && sampled_h == unsigned(b->base_h));
      }
  #endif
      render_host_layers(b);
-@@ -2528,7 +2555,9 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
+@@ -2598,7 +2628,9 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
      if (!b->pad_choice_saved) {
          const bool platform_default =
  #if defined(__ANDROID__)

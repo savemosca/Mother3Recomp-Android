@@ -1,4 +1,4 @@
-From 3e2930a55a522a4e1f9767175fb106406722a431 Mon Sep 17 00:00:00 2001
+From 0b8c59e8d750af6c33097525b60806fdb08e3290 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 15:49:10 +0200
 Subject: [PATCH] MP2K shadow: play at the canon direct-sound level

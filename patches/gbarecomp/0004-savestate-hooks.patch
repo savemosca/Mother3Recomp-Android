@@ -1,4 +1,4 @@
-From 657fd5912e28679867e3f9319168f1627ab7f870 Mon Sep 17 00:00:00 2001
+From c91647f04e1616407ff0ddd94f4716c426f576b1 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 20:19:53 +0200
 Subject: [PATCH] RunOptions::savestate_written / savestate_loaded
@@ -15,10 +15,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 15 insertions(+), 1 deletion(-)
 
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index bf335c7..368d57e 100644
+index 600dde9..e66df62 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
-@@ -2220,7 +2220,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -2331,7 +2331,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      };
      auto do_savestate_save = [&](const std::string& path,
                                   std::string& e) -> bool {
@@ -29,7 +29,7 @@ index bf335c7..368d57e 100644
      };
      auto do_savestate_load = [&](const std::string& path,
                                   std::string& e) -> bool {
-@@ -2245,6 +2247,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -2359,6 +2361,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
  #if defined(GBARECOMP_WEB_HOST)
          bus.audio().discard_playback();
  #endif
@@ -37,7 +37,7 @@ index bf335c7..368d57e 100644
          return true;
      };
      auto do_savestate_save_bytes = [&](std::vector<uint8_t>& bytes,
-@@ -2264,6 +2267,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -2379,6 +2382,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
  #if defined(GBARECOMP_WEB_HOST)
          bus.audio().discard_playback();
  #endif
@@ -46,10 +46,10 @@ index bf335c7..368d57e 100644
      };
  
 diff --git a/src/runtime/runtime.h b/src/runtime/runtime.h
-index acde71b..48d0a44 100644
+index bd09e06..20bfa1d 100644
 --- a/src/runtime/runtime.h
 +++ b/src/runtime/runtime.h
-@@ -161,6 +161,16 @@ struct RunOptions {
+@@ -173,6 +173,16 @@ struct RunOptions {
      // presentation. Null installs nothing.
      void (*vblank_frame)() = nullptr;
  

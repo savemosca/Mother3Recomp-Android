@@ -101,7 +101,7 @@ cd "$ROOT"
 # pinned revisions (the engine one is what the local patches were written
 # against). An existing checkout must contain its pinned revision: it may
 # carry local commits on top (e.g. the patches committed), nothing older.
-GBARECOMP_REV="5e89943528aee7bc1c399bdbd035364a4b41dd10"
+GBARECOMP_REV="7bb70ec36811de346f215720b8211ecd9f776738"
 RECOMP_UI_REV="41c88ffea852b970af8d50312620b17404e455ad"
 for sub in gbarecomp recomp-ui; do
   case "$sub" in

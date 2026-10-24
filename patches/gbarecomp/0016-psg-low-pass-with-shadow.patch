@@ -1,4 +1,4 @@
-From fc09a857de82b2c07549ac943c48d48393318c11 Mon Sep 17 00:00:00 2001
+From 74772ed9ad7efd2ad55382a8de0db7ab7d123802 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 17:43:52 +0200
 Subject: [PATCH] GbaAudio: low-pass the PSG channels while the MP2K shadow
