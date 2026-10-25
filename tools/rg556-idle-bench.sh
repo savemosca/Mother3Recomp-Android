@@ -10,19 +10,20 @@
 # mother3_en.suspend.state and mother3_en.suspend.pending; the target app's
 # files are overwritten.
 #
-# Usage: tools/rg556-idle-bench.sh <package> [seconds] [state-dir] [extra config.ini text]
+# Usage: [WIDE=1] tools/rg556-idle-bench.sh <package> [seconds] [state-dir] [extra config.ini text]
 set -u
 
 PKG="$1"
 SECS="${2:-60}"
 SRC="${3:-/data/local/tmp/m3-pre-update-20261024}"
 EXTRA="${4:-}"
+WIDE="${WIDE:-0}"  # m3_widescreen value
 D="/data/data/$PKG/files"
 
 adb shell am force-stop "$PKG"
 adb shell su -c "'set -e; mkdir -p $D/roms; rm -f $D/roms/mother3_en.suspend.* $D/android-runtime.log $D/debug-env.txt;
   cp $SRC/mother3_en.sav $SRC/mother3_en.suspend.state $SRC/mother3_en.suspend.pending $D/roms/;
-  printf \"[Display]\\ninteger_scale = 1\\n\\n[Audio]\\nenhanced = 1\\n\\n[Launcher]\\nm3_widescreen = 0\\n$EXTRA\" > $D/config.ini;
+  printf \"[Display]\\ninteger_scale = 1\\n\\n[Audio]\\nenhanced = 1\\n\\n[Launcher]\\nm3_widescreen = $WIDE\\n$EXTRA\" > $D/config.ini;
   U=\$(stat -c %u /data/data/$PKG); C=\$(ls -Zd /data/data/$PKG | cut -d\" \" -f1);
   chown -R \$U:\$U $D; chcon -R \$C $D'"
 adb shell svc power stayon usb
