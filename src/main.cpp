@@ -247,6 +247,11 @@ int mother3_main(int argc, char** argv) {
         opts.orientation = gbarecomp::RunOptions::Orientation::Landscape;
         opts.resume_suspend_state_on_launch = true;
         opts.ui_touch_friendly = true;
+        // Replay capture fingerprints the machine state every frame and
+        // checkpoints it periodically: about 0.4 points of late frames on the
+        // RG556. Off on handhelds; config.ini [Diagnostics] replay_capture = 1
+        // turns it back on to record a bug.
+        opts.diagnostic_replay_default = false;
         // touch_pad_default stays unset: the engine shows the touch pad on
         // phones and hides it when a controller is present (gaming handhelds
         // such as the RG556), until the player toggles it.
