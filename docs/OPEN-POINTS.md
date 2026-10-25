@@ -90,7 +90,13 @@ To do:
   Checked: ctest 63/63 with a new bus test for v2; the player's real state
   and two others load and run 3600 frames; frames after 600 are
   pixel-identical to the 7bb70ec build; FULLY_STATIC, 0 dispatch misses.
-  Pending: idle bench on the device, then install. The strategy C branch
+  The new engine also refuses frame-only suspend markers (d4bea3c: the
+  marker carries the battery save's SHA-1); the launcher upgrades an old
+  marker before PLAY (`SuspendBackups.upgradeMarker`), found by the bench
+  booting a test app fresh. Idle bench on the RG556, 120 s each, old vs
+  new: battle widescreen off 0/0 late frames, on 0/1, the player's field
+  0/0, max gap 22.7-25.4 ms. Installed in the player's app 2026-10-25 21:36
+  (backup `/data/local/tmp/m3-pre-engine-20261025`). The strategy C branch
   `m3recomp-engine` is still on 7bb70ec and needs the same rebase.
 
 ## 1b. Design review findings (2026-10-25)
