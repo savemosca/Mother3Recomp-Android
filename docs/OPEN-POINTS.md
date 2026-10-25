@@ -199,9 +199,9 @@ Phase 3: migrate the player's save; keep this fork working until then.
 
 ## 4. Upstream
 
-- mstan/gbarecomp #44-#50 merged 2026-10-24 (reviewed). Not yet proposed:
-  the pacer debt repayment (patch 0006) and v2 snapshot loading (0007, worth
-  proposing: it protects every title's suspend states across the bump).
+- mstan/gbarecomp #44-#50 merged 2026-10-24 (reviewed). #66 (v2 snapshot
+  loading, our patch 0007) opened 2026-10-25; when it lands, drop 0007 on
+  the next pin. Not yet proposed: the pacer debt repayment (patch 0006).
   Open from others: #39 (close IRQs that never iret; keep in reserve if a
   hang shows up).
 - josiahg2502-glitch/Mother3Recomp, open from savemosca/Mother3Recomp-1:
