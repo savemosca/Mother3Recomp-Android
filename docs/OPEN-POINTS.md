@@ -65,10 +65,15 @@ Done and installed in the player's app (2026-10-25 20:27; state backups in
   and `IO_0` sections.
 
 To do:
-- Looping maps (gGame 0x02005C00 + 0x11, bits 4/5): 0x08035820 has a
-  wrap-aware path with 240/160 built in and calls the map-size getters
-  0x0801A5EC/0x0801A61C/0x0801A604/0x0801A638; the hook declines there, so
-  actors still vanish at the native edge in those maps.
+- Looping maps (gGame+0x11 bits 4/5): done (built, not installed yet).
+  `overlap_view()` reproduces 0x08035820's wrap path with the game's 16-bit
+  arithmetic and the widened width instead of its built-in 240. Checked
+  headless with the loop bits forced on in two states and the widening set
+  to zero: after 600 frames (4551 calls on the looping path) EWRAM, IWRAM,
+  VRAM, OAM and palette equal the original function's run byte for byte,
+  except dead stack bytes below SP; only timing counters differ, because a
+  hooked call skips the original body's cycles. No real looping map tested
+  yet.
 - Other overlays (fog, darkness) on layers other than a blended BG1 are not
   handled; capture a suspend state where one is cut (HOME, then copy
   `roms/mother3_en.suspend.state`) and inspect it the same way.

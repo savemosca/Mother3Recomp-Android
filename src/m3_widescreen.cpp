@@ -304,24 +304,46 @@ int place_obj(int, std::uint16_t attr0, std::uint16_t attr1, std::uint16_t, int*
 // {camera, 240x160} rect and asks one of two overlap tests (rect, pos, size)
 // whether an actor's box touches it. Actors outside never reach OAM, so they
 // vanished at the old screen edge while the scenery around them showed. While
-// the field is widened, answer those tests against the wider view. Looping
-// maps (gGame+0x11 bits 4/5) take a wrap-aware path built on the native width
-// and keep the native test.
+// the field is widened, answer those tests against the wider view.
+// 0x08035820 also serves looping maps (gGame+0x11 bit 5 horizontally, bit 4
+// vertically): an actor before the view's left (top) edge still counts when
+// the view runs past the map's far edge and wraps onto it. That test is
+// reproduced with the game's own 16-bit arithmetic and the 240 it has built
+// in replaced by the widened width; the map size comes from the actor's own
+// layer when it has one (+0xCB bit 7, layer in +0xBD bits 5-6), else from the
+// main layer (gGame+0x0E bits 6-7).
 constexpr std::uint32_t kOverlap = 0x080357D0;
 constexpr std::uint32_t kOverlapLooping = 0x08035820;
 constexpr const char* kCullHooks[] = {"m3.widescreen.cull", "m3.widescreen.cull-looping"};
 
+int layer_px(int index, bool height) {  // sub_0801A61C / sub_0801A638
+    const int info = ew8(kLayerInfo + 4u * index);
+    return 256 * (((height ? info >> 3 : info) & 7) + 1);
+}
+
 int overlap_view(std::uint32_t addr, int, ArmCpuState* cpu) {
     if (!g.ok) return 0;
-    const std::uint32_t rect = cpu->R[0], pos = cpu->R[1], size = cpu->R[2];
+    const std::uint32_t rect = cpu->R[0], pos = cpu->R[1], size = cpu->R[2], actor = cpu->R[3];
     if (bus_read_u16(rect + 4) != 240 || bus_read_u16(rect + 6) != 160) return 0;  // not the view
-    if (addr == kOverlapLooping && (ew8(kMapLoops) & 0x30)) return 0;
     auto s16 = [](std::uint32_t a) { return static_cast<int>(static_cast<std::int16_t>(bus_read_u16(a))); };
     const int x = s16(rect) - g_margin_left, w = 240 + g_margin_left + g_margin_right;
     const int y = s16(rect + 2), h = 160;
     const int px = s16(pos), py = s16(pos + 2);
     const int half_w = bus_read_u16(size) >> 1, box_h = bus_read_u16(size + 2);
-    cpu->R[0] = x <= px + half_w && x + w >= px - half_w && y <= py && y + h >= py - box_h;
+    const int loops = addr == kOverlapLooping ? ew8(kMapLoops) : 0;
+    auto map_px = [actor](bool height) {
+        const bool own = actor && (bus_read_u8(actor + 0xCB) >> 7);
+        return layer_px(own ? (bus_read_u8(actor + 0xBD) >> 5) & 3 : ew8(kGame + 0x0E) >> 6, height);
+    };
+    auto wrapped = [](int view, int extent, int map) {  // where the wrapped part of the view ends
+        return static_cast<int>(static_cast<std::uint16_t>(extent - (map - view)));
+    };
+    bool hit = true;
+    if (x > px + half_w) hit = (loops & 0x20) && px < wrapped(x, w, map_px(false));
+    hit = hit && x + w >= px - half_w;
+    if (hit && y > py) hit = (loops & 0x10) && py < wrapped(y, h, map_px(true));
+    hit = hit && y + h >= py - box_h;
+    cpu->R[0] = hit;
     cpu->R[15] = cpu->R[14] & ~1u;  // return to the caller
     return 1;
 }
