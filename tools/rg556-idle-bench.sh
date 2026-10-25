@@ -30,8 +30,15 @@ adb shell svc power stayon usb
 adb shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 \
   -n "$PKG/com.ylports.mother3recomp.Mother3SetupActivity" >/dev/null
 sleep 3
-adb shell input tap 959 392  # PLAY on the fork's launcher
-until adb shell su -c "'grep -q suspend_resumed $D/android-runtime.log 2>/dev/null'"; do sleep 1; done
+adb shell input keyevent BUTTON_START  # the launcher plays on START, wherever PLAY sits
+for ((i = 0; ; i++)); do
+  adb shell su -c "'grep -q suspend_resumed $D/android-runtime.log 2>/dev/null'" && break
+  if ((i >= 60)); then
+    echo "the game did not resume within 60 s (launcher not on screen?)" >&2
+    adb shell am force-stop "$PKG"; adb shell svc power stayon false; exit 1
+  fi
+  sleep 1
+done
 sleep "$SECS"
 adb shell input keyevent HOME
 until adb shell su -c "'grep -q session_health $D/android-runtime.log'"; do sleep 1; done
