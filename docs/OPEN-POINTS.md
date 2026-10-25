@@ -2,32 +2,84 @@
 
 Snapshot of unfinished work, 2026-10-25. Update or strike items as they close.
 
-## 1. Frame-pacing regression since the engine update (priority)
+## 1. Frame-pacing regression since the 2026-10-24 update: solved
 
-- Symptom: occasional micro-stutter and small crackles on the RG556 after the
-  2026-10-24 update; the player reports the app was perfect before.
-- Evidence (`files/sessions/*`, `session_health` late_frames = present gaps
-  > 25 ms): builds on mstan 5e89943 (2026-10-15) had 0-0.3 % late frames
-  (e.g. 2 of 15778); builds on mstan 7bb70ec (2026-10-24) have about 1 %
-  (e.g. 36 of 3108). The first 7bb70ec session had widescreen off and was
-  already at 1.15 %, so widescreen is not the cause. Audio never ran dry
-  (`audio_dry_ms=0`).
-- Profile (simpleperf, field scene, 15 s): game thread busy ~75 %;
-  `render_scanline_wide` 18 %, `bus_read_u16` 15 %, `GbaBus::read16` 7 %,
-  `m3widescreen::void_cell` 3 %.
-- Suspects among the 45 mstan commits 5e89943..7bb70ec: 6076e7b always-on
-  diagnostic replay (per-frame state fingerprints, periodic checkpoints;
-  disable with config.ini `[Diagnostics] replay_capture = 0`); a01d93a,
-  e9826f6, bb70a43 byte-verified native RAM templates (verified on every
-  dispatch, 1059 templates for MOTHER 3); 60892e4 / 304b4c8 scanline changes;
-  db89cf2 present-in-place stack budget (`GBARECOMP_PRESENT_IN_PLACE=0`).
-- Set-up for the A/B, ready on the device (not the player's app):
-  - `com.ylports.mother3recomp.en.bold` = fork 0d9dfff (engine 5e89943),
-  - `com.ylports.mother3recomp.en.bnew` = fork 092217a (engine 7bb70ec),
-  both built from scratch worktrees with only the application id and title
-  changed. Run `tools/rg556-idle-bench.sh <package>` on each (screen
-  unlocked), then repeat on `bnew` with one suspect disabled at a time.
-- Uninstall both when done (`adb uninstall <package>`).
+- Cause: widescreen, not the engine. Idle A/B on the RG556 (120 s, same
+  suspend state, `tools/rg556-idle-bench.sh`; `WIDE=1` turns widescreen on):
+  old engine 5e89943 0.46 % late frames, new engine 7bb70ec 0.50 % (both
+  widescreen off); 7bb70ec with widescreen 2.3-3.8 %, max gap 43 ms, and
+  below 60 fps (6536-7086 frames instead of ~7240).
+- `m3_widescreen.cpp` read the field through the `bus_read_*` bridge for
+  every margin pixel and layer, and `in_room()` had no cache. Where a scene
+  is "sane" but never validates (bench state, map 12), `tick()` reran the
+  full width search every 50 ms, also through the bus.
+- Fix (uncommitted, in `src/m3_widescreen.cpp`): EWRAM is read directly
+  (`ewram_ptr()`, same bytes as `GbaBus::read16`), and `void_cell()` is
+  memoized per rendered frame (32x32 direct-mapped, keyed by PPU
+  `frame_count()` and a field generation). Checked with a temporary build:
+  163 M cached answers compared with uncached ones, 0 differences; sampled
+  direct reads equal to the bus, 0 differences. Bench with widescreen: 0 and
+  0 late frames, 23 ms max gap, 7241 frames.
+- Installed in the player's app on 2026-10-25 19:45 (with `SuspendBackups`,
+  below). Player's first session: 14652 frames, 5 late (0.03 %), audio clean.
+- The test apps (`.bold`, `.bnew`, `.m3rtest`) were uninstalled.
+- Lesson: the bench drives the device (launch, taps, HOME); never run it
+  while the player plays, and never leave a game process in the background
+  after restoring files: on 2026-10-25 00:11 a leftover profiling process
+  flushed its own state over the restored one (put back from
+  `/data/local/tmp/m3-pre-perf-20261025`, md5 2b1dab83...).
+
+## 1a. Widescreen follow-ups
+
+Done and installed in the player's app (2026-10-25 20:27; state backups in
+`/data/local/tmp/m3-pre-cull-20261025` and `m3-pre-sky-20261025`):
+- Weather on BG1 (rain in map 11, drifting clouds in map 12) was cut at the
+  native edge. A first fix (installed 2026-10-25 20:08) repeated the 256 px
+  BG ring; the player saw clouds in the wrong place, because the clouds are
+  map layer 0 with its own size (768x768, looping horizontally) and its own
+  scroll, streamed into the ring 16 px at a time like the scenery
+  (`sub_0801124C`), so the ring is a window, not a repeating pattern.
+  Fix (installed 2026-10-25 20:27, clouds confirmed by the player): the model reads layer 0's geometry from
+  MapLayerInfo (gGame+0x1C) and its column/row from the per-layer scroll
+  block (gGame+0x58B0 + 0x38*layer), snapped to BG1's scroll registers;
+  a "detached" layer 0 wraps when it loops and is left out of the void test
+  and of the width validation. Layers exactly 256 px wide (the rain) keep the
+  ring wrap. Checked headless: clouds continuous across the old edge over 90
+  frames; maps 11 and 12 validate at width 48 as before.
+- Actors vanished at the native edge: the field draw code
+  (0x08030810, 0x08030A00, 0x08030B70, 0x0802D6A0, 0x0803092C) builds a
+  `{camera, 240x160}` rect and culls actors with the overlap tests
+  0x080357D0 and 0x08035820 (rect, pos, size; addresses equal in the JP
+  decomp and EN v1.3). Two `[[mod_function_hook]]` entries in
+  `variants/mother3en/game.toml` hand those to `overlap_view()`, which answers
+  against the widened rect, only when the rect is exactly 240x160 and the
+  field is validated; the hooks are enabled only at widths above 240.
+  Headless check (map 11 state): an NPC 20-36 px past the old right edge,
+  previously invisible, is drawn; 3600-frame runs from two states are clean.
+- Desktop test bench on the Mac: `CMakeLists.txt` skips GNU link groups on
+  Apple; build with `cmake -S <tree> -B <dir> -G Ninja
+  -DCMAKE_BUILD_TYPE=Release` and run `Mother3RecompEN --rom --bios
+  --load-state <state> --frames N --dump-png <file>` (muted:
+  `SDL_AUDIODRIVER=dummy`; config.ini `[Launcher] m3_widescreen = 1`).
+  Suspend states parse with the `BUS0` (EWRAM, IWRAM, palette, VRAM, OAM)
+  and `IO_0` sections.
+
+To do:
+- Looping maps (gGame 0x02005C00 + 0x11, bits 4/5): 0x08035820 has a
+  wrap-aware path with 240/160 built in and calls the map-size getters
+  0x0801A5EC/0x0801A61C/0x0801A604/0x0801A638; the hook declines there, so
+  actors still vanish at the native edge in those maps.
+- Other overlays (fog, darkness) on layers other than a blended BG1 are not
+  handled; capture a suspend state where one is cut (HOME, then copy
+  `roms/mother3_en.suspend.state`) and inspect it the same way.
+- Widening the cull also changes the actor "off screen" flag (bit 7 of
+  +0xC8) while widescreen is on; no gameplay effect seen so far, keep an eye
+  on events that start when an actor comes on screen.
+- Device builds currently come from the worktree at fork 092217a (engine
+  7bb70ec + patches 0001-0018), because `gbarecomp/` in the main checkout is
+  on `m3recomp-engine` (strategy C). Commit the changes below on
+  `rg556-tuning` and rebuild from the main checkout once `gbarecomp/` is back
+  on the pinned engine.
 
 ## 1b. Design review findings (2026-10-25)
 
@@ -40,21 +92,22 @@ Ordered by impact on the player.
    audio changes the ROM SHA-1), it is not part of the cloud sync, and a
    cloud download deletes the resume marker (`CloudSaves.runSync`), so the
    game silently boots from the older `.sav` (the state file stays on disk).
-   Ideas: keep the last N suspend states, sync the state as a second file,
-   warn when the `.sav` is much older than the state, verify the state loads
-   before shipping an engine update.
-2. **`m3widescreen` reads the map through the emulated bus per margin
-   pixel.** `void_width` → `in_room` → `void_cell` (up to 36 `bus_read_*`
-   per 16 px cell) runs for each of the 2x22 margin pixels on 160 lines; the
-   cache (`black_width`) resets whenever the camera moves, i.e. every frame
-   while walking. Map data does not change while walking: cache `void_cell`
-   per (map, cell) and read EWRAM through `ewram_ptr()` instead of the bus.
-   Profile: `bus_read_u16` 15 %, `GbaBus::read16` 7 % of the game thread.
+   Done: `SuspendBackups` (installed 2026-10-25) copies the state and its
+   `.ra` sidecar to `files/suspend-backups/<stem>.<state time>.state` before
+   every PLAY, after the cloud sync, keeping 8; first copy verified on the
+   device. Restore by hand: copy back to `roms/`, create
+   `roms/<stem>.suspend.pending`. Still open: a restore entry in the
+   launcher, a warning when the `.sav` is much older than the state, syncing
+   the state, checking that the state loads before an engine update. The
+   player's `.sav` still dates from 2026-10-15: save in game.
+2. **`m3widescreen` read the map through the emulated bus per margin
+   pixel.** Fixed, see item 1.
 3. **`mother3_ram_dispatch` re-reads constant ROM on every call.** For each
    dispatch into RAM code it compares the opcode with ~60 ROM halfwords read
-   through the bus. Cache the four routines' ROM bytes once; only the opcode
-   at `pc` needs a bus read. The 7bb70ec engine also verifies its own RAM
-   templates first (`lookup_native_ram`), so the per-dispatch cost grew.
+   through the bus. Probably negligible: it runs only for THUMB RAM PCs the
+   engine's own templates miss, and it does not show in the 2026-10-25
+   profile (the 15 % `bus_read_u16` was widescreen). Confirm with a profile
+   of the fixed build before touching it.
 4. **The engine patch stack is the weak point of every engine update.** 18
    patches; 7 touch `runtime.cpp`, 7 `host_window.cpp`, 5 `gba_audio.cpp`.
    The 2026-10-24 merge put the pacer deadline update in two places (game at
@@ -90,10 +143,12 @@ Phase 1 (engine), done on desktop, not pushed:
   `fix/macos-link` 7b2279a (ld64 rejects GNU link groups; PR candidate),
   `feat/rg556-preset` b44521e (`-Pm3Device=rg556`: OpenSL ES, 512/40/120
   audio, big cores). Their HQ-toggle PR branch is `feat/hq-audio-toggle`.
-- Test app `com.ylports.mother3recomp.en.m3rtest` on the device (built with
-  a local applicationId edit). Findings there:
-  - micro-stutter and crackles as in item 1 (same engine), plus audio less
-    clean than ours: their app has no Enhanced audio (MP2K shadow mixer), so
+- Test app `com.ylports.mother3recomp.en.m3rtest` (built with a local
+  applicationId edit; uninstalled 2026-10-25, rebuild to test again).
+  Findings there:
+  - micro-stutter and crackles (widescreen cost, item 1; their
+    `m3_widescreen.cpp` is the same code, so the fix applies there too and
+    is a PR candidate), plus audio less clean than ours: their app has no Enhanced audio (MP2K shadow mixer), so
     the PSG 8 kHz low-pass (0016) is not applied; their HQ patch only covers
     DirectSound;
   - suspend states from our app are rejected (ROM SHA-1 differs once HQ
@@ -134,7 +189,17 @@ Phase 3: migrate the player's save; keep this fork working until then.
   `gh repo delete savemosca/Mother3Recomp --yes` and
   `gh repo delete savemosca/Mother3Recomp-Android-standalone --yes`;
   optionally rename savemosca/Mother3Recomp-1 to Mother3Recomp afterwards.
-- Device backups in `/data/local/tmp`: `m3-pre-perf-20261025`,
+- Device backups in `/data/local/tmp`: `m3-pre-wsfix-20261025` (state as
+  found before the 19:45 install, including the stray profiling minutes),
+  `m3-pre-perf-20261025` (the player's own last state, restored),
   `m3-pre-update-20261024` (last state saved by the old engine; used by the
   bench), `m3-probe-20261024`, `m3-suspend-20261015`.
+- Uncommitted in the main checkout (branch `rg556-tuning`):
+  `src/m3_widescreen.cpp`, `variants/mother3en/game.toml`, `CMakeLists.txt`,
+  `SuspendBackups.java` + its call in `Mother3SetupActivity.java`,
+  `tools/rg556-idle-bench.sh` (`WIDE=`), this file.
+- Scratch worktrees: `wt-old` can go (`git worktree remove`); `wt-new` holds
+  the device build tree until the item 1a commit lands.
+- `third_party/mother3` is not checked out; a shallow clone of
+  Kurausukun/mother3 sits in the session scratchpad (reference only).
 - Never publish the `*-PRIVATE-rom-included.apk` outputs.
