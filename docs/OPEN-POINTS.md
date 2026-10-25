@@ -80,11 +80,18 @@ To do:
 - Widening the cull also changes the actor "off screen" flag (bit 7 of
   +0xC8) while widescreen is on; no gameplay effect seen so far, keep an eye
   on events that start when an actor comes on screen.
-- Device builds currently come from the worktree at fork 092217a (engine
-  7bb70ec + patches 0001-0018), because `gbarecomp/` in the main checkout is
-  on `m3recomp-engine` (strategy C). Commit the changes below on
-  `rg556-tuning` and rebuild from the main checkout once `gbarecomp/` is back
-  on the pinned engine.
+- Engine update (2026-10-25): mstan merged #44-#50 (reviewed) on 10-24, so
+  the build now pins mstan e353848 with 7 local patches instead of 18
+  (`gbarecomp/` branch `mstan-update-20261025`): handheld tuning, vblank
+  hook, integer scale, savestate hooks, embedded-assets launcher hook, pacer
+  debt repayment, and new 0007 that loads version-2 snapshots again
+  (upstream d4c88e6 moved to v4 and rejected v2, which would have discarded
+  every player's suspend state; v2 lacks only the SWI continuation tail).
+  Checked: ctest 63/63 with a new bus test for v2; the player's real state
+  and two others load and run 3600 frames; frames after 600 are
+  pixel-identical to the 7bb70ec build; FULLY_STATIC, 0 dispatch misses.
+  Pending: idle bench on the device, then install. The strategy C branch
+  `m3recomp-engine` is still on 7bb70ec and needs the same rebase.
 
 ## 1b. Design review findings (2026-10-25)
 
@@ -186,9 +193,11 @@ Phase 3: migrate the player's save; keep this fork working until then.
 
 ## 4. Upstream
 
-- mstan/gbarecomp #44-#50 open, no reviews. Patch 0018 (pacer debt
-  repayment) not yet proposed; mind that wait_for_next_frame() owns the
-  deadline update (see e496af6 on `m3recomp-engine`).
+- mstan/gbarecomp #44-#50 merged 2026-10-24 (reviewed). Not yet proposed:
+  the pacer debt repayment (patch 0006) and v2 snapshot loading (0007, worth
+  proposing: it protects every title's suspend states across the bump).
+  Open from others: #39 (close IRQs that never iret; keep in reserve if a
+  hang shows up).
 - josiahg2502-glitch/Mother3Recomp, open from savemosca/Mother3Recomp-1:
   #31 (engine bridge iret + tests), #32 (HQ audio toggle), #33 (widescreen:
   stutter, clouds, actors; same code as item 1/1a, tested with their engine

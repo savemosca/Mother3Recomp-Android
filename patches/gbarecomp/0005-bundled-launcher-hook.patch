@@ -1,7 +1,7 @@
-From a6dd084032ab6887fdc921ef20d4cd7d11bd3fc8 Mon Sep 17 00:00:00 2001
+From 71e40729a627b46c9c7eb11d93e4478725cef7c8 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 00:35:02 +0200
-Subject: [PATCH] Android setup: let games handle APKs with embedded assets
+Subject: [PATCH 5/7] Android setup: let games handle APKs with embedded assets
 
 GbaSetupActivity.onBundledAssets() replaces the hard-wired "start the game
 and finish" for APKs that carry the ROM/BIOS, so a game can show its own

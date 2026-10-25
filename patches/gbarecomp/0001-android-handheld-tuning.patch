@@ -1,7 +1,7 @@
-From a69c273e8e0344c90a25806dc6488622dc2f9631 Mon Sep 17 00:00:00 2001
+From f9040530b78fc35a3f273182426fa47909a92df4 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Tue, 13 Oct 2026 23:38:09 +0200
-Subject: [PATCH] Android handheld tuning: full-screen sharp scaling, audio
+Subject: [PATCH 1/7] Android handheld tuning: full-screen sharp scaling, audio
  knobs, big-core pinning
 
 - Mobile layout fills the display when the touch pad is hidden instead of
@@ -23,10 +23,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 126 insertions(+), 39 deletions(-)
 
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index 45b0502..7cd986c 100644
+index 496d741..6aef847 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
-@@ -531,6 +531,41 @@ bool ensure_sharp_texture(Backend* b, int factor) {
+@@ -557,6 +557,41 @@ bool ensure_sharp_texture(Backend* b, int factor) {
      return true;
  }
  
@@ -68,7 +68,7 @@ index 45b0502..7cd986c 100644
  void close_game_controller(Backend* b) {
      if (!b || !b->controller) return;
  #if SDL_VERSION_ATLEAST(2, 0, 14)
-@@ -1282,6 +1317,17 @@ runtime::ColorSettings resolve_color_settings(const char* toml_screen) {
+@@ -1314,6 +1349,17 @@ runtime::ColorSettings resolve_color_settings(const char* toml_screen) {
      return s;
  }
  
@@ -86,7 +86,7 @@ index 45b0502..7cd986c 100644
  // SDL audio pull callback: render exactly `len` bytes of device-rate mono S16
  // from the bridge ring. The bridge emits faded silence (not raw zeros) before
  // prime / on underrun, so a momentarily-starved producer no longer clicks.
-@@ -1416,9 +1462,13 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
+@@ -1448,9 +1494,13 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
          SDL_GetWindowSize(b->window, &drawable_w, &drawable_h);
      }
      PresentationLayout layout{};
@@ -101,7 +101,7 @@ index 45b0502..7cd986c 100644
          layout = compute_adaptive_presentation_layout(drawable_w, drawable_h,
                                                        b->base_w, b->base_h);
      } else {
-@@ -1877,7 +1927,8 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+@@ -1909,7 +1959,8 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
      want.freq     = 65536;
      want.format   = AUDIO_S16SYS;
      want.channels = 1;
@@ -111,7 +111,7 @@ index 45b0502..7cd986c 100644
      const char* direct_audio_env = std::getenv("GBARECOMP_AUDIO_DIRECT");
      b->audio_direct =
          direct_audio_env && *direct_audio_env && *direct_audio_env != '0';
-@@ -1925,10 +1976,20 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+@@ -1957,10 +2008,20 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
              cfg.channels    = 1;
              cfg.source_rate = 65536.0;                 // engine's standardized GBA mixer rate
              cfg.host_rate   = static_cast<double>(got.freq);
@@ -135,7 +135,7 @@ index 45b0502..7cd986c 100644
              SDL_PauseAudioDevice(b->audio_dev, 0);      // start the callback
          }
      }
-@@ -2328,43 +2389,12 @@ void HostWindow::present(const uint8_t* rgb888, unsigned sampled_w, unsigned sam
+@@ -2507,43 +2568,12 @@ void HostWindow::present(const uint8_t* rgb888, unsigned sampled_w, unsigned sam
      }
      if (touch_input_enabled(b)) publish_touch_presentation(b);
  #if defined(__ANDROID__)
@@ -181,7 +181,7 @@ index 45b0502..7cd986c 100644
      }
  #endif
      render_host_layers(b);
-@@ -2598,7 +2628,9 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
+@@ -2777,7 +2807,9 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
      if (!b->pad_choice_saved) {
          const bool platform_default =
  #if defined(__ANDROID__)
@@ -193,16 +193,18 @@ index 45b0502..7cd986c 100644
              false;
  #endif
 diff --git a/src/runtime/mobile_platform.cpp b/src/runtime/mobile_platform.cpp
-index 176a73b..661e864 100644
+index 0b3379e..709a451 100644
 --- a/src/runtime/mobile_platform.cpp
 +++ b/src/runtime/mobile_platform.cpp
-@@ -2,11 +2,13 @@
+@@ -6,6 +6,7 @@
  
  #include "mobile_platform.h"
  
 +#include <algorithm>
+ #include <cstdint>
  #include <cstdio>
  #include <cstdlib>
+@@ -16,6 +17,7 @@
  
  #if defined(__ANDROID__)
  #include <pthread.h>
@@ -210,8 +212,8 @@ index 176a73b..661e864 100644
  #include <unistd.h>
  
  #include <SDL.h>
-@@ -23,7 +25,60 @@ struct StackedCall {
-     char** argv = nullptr;
+@@ -44,7 +46,60 @@ struct StackedCall {
+     std::size_t stack_bytes = 0;
      int result = 1;
  };
 +// GBARECOMP_BIG_CORES=1 keeps the game thread on the performance cores, so
@@ -269,8 +271,8 @@ index 176a73b..661e864 100644
  void* run_stacked(void* arg) {
 +    pin_to_big_cores();
      auto* call = static_cast<StackedCall*>(arg);
-     call->result = call->entry(call->argc, call->argv);
-     return nullptr;
+     // Arm this thread's budget: keep kGuardMargin of headroom for the
+     // runtime's own transient frames between two instruction-boundary
 -- 
 2.56.0
 

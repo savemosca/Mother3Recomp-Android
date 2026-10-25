@@ -1,0 +1,194 @@
+From 57a968e8ceac6a653dd3070ac1b4fea5ef4d3ce1 Mon Sep 17 00:00:00 2001
+From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 21:09:02 +0100
+Subject: [PATCH 7/7] Snapshots: load version 2 (no SWI continuations) again
+
+d4c88e6 appended the SWI continuations to the CPU section and moved the
+container to version 4, rejecting everything else. Version 2 differs only
+by that tail: the CPU state, the call stack and every other section are
+unchanged. Rejecting it throws away a player's suspend state on the
+first launch of an updated build, which can mean days of progress in a
+game whose players rarely use its own save points.
+
+A version-2 snapshot now loads with no continuation pending, which is
+how version-2 runtimes restored it. Its CPU section must still be
+consumed exactly; any other version is still rejected. bus_tests covers
+both: a current snapshot rewritten in the version-2 layout loads and
+restores the guest, and the same layout with stray CPU bytes is rejected
+without touching it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/debug/snapshot.cpp  | 15 +++++---
+ tests/bus/test_main.cpp | 84 +++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 94 insertions(+), 5 deletions(-)
+
+diff --git a/src/debug/snapshot.cpp b/src/debug/snapshot.cpp
+index fcf05bd..5e88723 100644
+--- a/src/debug/snapshot.cpp
++++ b/src/debug/snapshot.cpp
+@@ -35,6 +35,11 @@ namespace {
+ 
+ constexpr char kMagic[4] = {'G', 'B', 'A', 'S'};
+ constexpr uint32_t kLegacySnapshotVersion = 1;
++// Version 2 predates the SWI continuations at the end of the CPU section
++// (d4c88e6); its sections are otherwise the same. It loads with no
++// continuation pending, as version-2 runtimes restored it, so suspend states
++// and save slots survive the engine update.
++constexpr uint32_t kSwiLessSnapshotVersion = 2;
+ 
+ // FourCC section tags.
+ constexpr uint32_t fourcc(char a, char b, char c, char d) {
+@@ -87,14 +92,14 @@ void serialize_cpu(SnapshotWriter& w) {
+     for (const auto& slot : swi) { w.u32(slot.continuation); w.u32(slot.return_pc); }
+ }
+ 
+-bool deserialize_cpu(SnapshotReader& r, bool commit) {
++bool deserialize_cpu(SnapshotReader& r, bool commit, bool has_swi) {
+     ArmCpuState cpu{};
+     r.bytes(&cpu, sizeof(cpu));
+     uint32_t depth = r.u32();
+     if (!r.ok() || depth > 1024 || depth > r.remaining() / 4u) return false;
+     std::vector<uint32_t> entries(depth, 0);
+     for (uint32_t i = 0; i < depth; ++i) entries[i] = r.u32();
+-    const uint32_t count = r.u32();
++    const uint32_t count = has_swi ? r.u32() : 0u;
+     if (!r.ok() || count > kRuntimeSwiLimit || count > r.remaining() / 8u) return false;
+     std::vector<RuntimeSwiContinuation> swi(count);
+     for (auto& slot : swi) { slot.continuation = r.u32(); slot.return_pc = r.u32(); }
+@@ -221,7 +226,7 @@ bool load_state_bytes(const uint8_t* data, std::size_t size,
+         return false;
+     }
+     uint32_t version = head.u32();
+-    if (version != kSnapshotVersion) {
++    if (version != kSnapshotVersion && version != kSwiLessSnapshotVersion) {
+         if (err) {
+             *err = "snapshot: version mismatch (file v" +
+                    std::to_string(version) + ", runtime v" +
+@@ -346,12 +351,12 @@ bool load_state_bytes(const uint8_t* data, std::size_t size,
+ 
+     {
+         SnapshotReader r = reader_for(TAG_CPU);
+-        if (!deserialize_cpu(r, false)) {
++        if (!deserialize_cpu(r, false, version != kSwiLessSnapshotVersion)) {
+             if (err) *err = "snapshot: invalid CPU continuation";
+             return false;
+         }
+     }
+-    { SnapshotReader r = reader_for(TAG_CPU);   deserialize_cpu(r, true); }
++    { SnapshotReader r = reader_for(TAG_CPU);   deserialize_cpu(r, true, version != kSwiLessSnapshotVersion); }
+     { SnapshotReader r = reader_for(TAG_BUS);   ctx.bus->deserialize(r); }
+     { SnapshotReader r = reader_for(TAG_IO);    ctx.bus->io().deserialize(r); }
+     // WAITCNT arrived with the IO page; re-derive the bus wait-state table.
+diff --git a/tests/bus/test_main.cpp b/tests/bus/test_main.cpp
+index 3b5843e..35cb13a 100644
+--- a/tests/bus/test_main.cpp
++++ b/tests/bus/test_main.cpp
+@@ -7,6 +7,7 @@
+ #include <cstring>
+ #include <filesystem>
+ #include <fstream>
++#include <iterator>
+ #include <string>
+ #include <vector>
+ 
+@@ -353,6 +354,88 @@ void test_v2_trailing_container_rejects_before_guest_mutation() {
+     std::filesystem::remove(path, ec);
+ }
+ 
++// Rewrites a current snapshot in the version-2 layout: the CPU section ends
++// before the SWI continuation count (which must be 0). `extra` appends that
++// many stray bytes to the section to check the framing still holds.
++bool write_swi_less_v2(const std::filesystem::path& from, const std::filesystem::path& to,
++                       uint32_t extra) {
++    std::ifstream in(from, std::ios::binary);
++    std::vector<char> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
++    auto u32_at = [&d](std::size_t o) {
++        return static_cast<uint32_t>(static_cast<uint8_t>(d[o])) |
++               static_cast<uint32_t>(static_cast<uint8_t>(d[o + 1])) << 8 |
++               static_cast<uint32_t>(static_cast<uint8_t>(d[o + 2])) << 16 |
++               static_cast<uint32_t>(static_cast<uint8_t>(d[o + 3])) << 24;
++    };
++    auto put_u32 = [&d](std::size_t o, uint32_t v) {
++        for (int i = 0; i < 4; ++i) d[o + i] = static_cast<char>((v >> (8 * i)) & 0xffu);
++    };
++    if (d.size() < 52) return false;
++    const uint32_t sections = u32_at(48);
++    std::size_t pos = 52;
++    for (uint32_t i = 0; i < sections && pos + 8 <= d.size(); ++i) {
++        const uint32_t size = u32_at(pos + 4);
++        if (std::memcmp(&d[pos], "CPU0", 4) == 0) {
++            const std::size_t count_at = pos + 8 + size - 4;
++            if (size < 4 || u32_at(count_at) != 0) return false;
++            d.erase(d.begin() + static_cast<std::ptrdiff_t>(count_at),
++                    d.begin() + static_cast<std::ptrdiff_t>(count_at + 4));
++            d.insert(d.begin() + static_cast<std::ptrdiff_t>(count_at), extra, '\0');
++            put_u32(pos + 4, size - 4 + extra);
++            put_u32(4, 2);
++            std::ofstream out(to, std::ios::binary | std::ios::trunc);
++            out.write(d.data(), static_cast<std::streamsize>(d.size()));
++            return static_cast<bool>(out);
++        }
++        pos += 8 + size;
++    }
++    return false;
++}
++
++void test_v2_swi_less_snapshot_loads() {
++    namespace debug = gbarecomp::debug;
++    gba::GbaBus bus;
++    gba::GbaPpu ppu;
++    debug::ModStateRegistry empty_catalog;
++    debug::SnapshotContext context;
++    context.bus = &bus;
++    context.ppu = &ppu;
++    context.rom_sha1 = "0123456789012345678901234567890123456789";
++    context.mod_state = &empty_catalog;
++    std::string error;
++    std::error_code ec;
++    const auto dir = std::filesystem::temp_directory_path();
++    const auto source = dir / "gbarecomp-v2-swi-less-source.gbas";
++    const auto v2 = dir / "gbarecomp-v2-swi-less.gbas";
++    const auto v2_stray = dir / "gbarecomp-v2-swi-less-stray.gbas";
++
++    bus.write8(0x02000000u, 0x11);
++    check_bool("snapshot_v2_swi_less", "write source",
++               debug::save_state(source.string().c_str(), context, &error), true);
++    check_bool("snapshot_v2_swi_less", "rewrite as v2", write_swi_less_v2(source, v2, 0), true);
++    check_bool("snapshot_v2_swi_less", "rewrite as v2 with stray CPU bytes",
++               write_swi_less_v2(source, v2_stray, 4), true);
++
++    // Suspend states and slots written before the SWI continuations existed
++    // load with none pending.
++    bus.write8(0x02000000u, 0x22);
++    error.clear();
++    check_bool("snapshot_v2_swi_less", "v2 loads",
++               debug::load_state(v2.string().c_str(), context, &error), true);
++    check_eq("snapshot_v2_swi_less", "guest restored", bus.read8(0x02000000u), 0x11u);
++
++    // The CPU section must still be consumed exactly.
++    bus.write8(0x02000000u, 0x33);
++    error.clear();
++    check_bool("snapshot_v2_swi_less", "stray CPU bytes rejected",
++               debug::load_state(v2_stray.string().c_str(), context, &error), false);
++    check_eq("snapshot_v2_swi_less", "rejection leaves guest", bus.read8(0x02000000u), 0x33u);
++
++    std::filesystem::remove(source, ec);
++    std::filesystem::remove(v2, ec);
++    std::filesystem::remove(v2_stray, ec);
++}
++
+ void test_sram_bus_width_and_region_mirroring() {
+     gba::GbaBus bus;
+     bus.save().configure_sram(32 * 1024);
+@@ -777,6 +860,7 @@ int main() {
+     test_snapshot_mods_preflight_before_guest_restore();
+     test_legacy_v1_snapshot_empty_catalog_only();
+     test_v2_trailing_container_rejects_before_guest_mutation();
++    test_v2_swi_less_snapshot_loads();
+     test_sram_bus_width_and_region_mirroring();
+     test_bios_undocumented_io_write();
+     test_bios_window_writes_are_ignored();
+-- 
+2.56.0
+

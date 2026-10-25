@@ -1,7 +1,8 @@
-From e7fc223cd3d86cb8cef8d5fdda0d8b903b3b1608 Mon Sep 17 00:00:00 2001
+From 8fa4942a927416675fb858defd8ed1a2c5445eeb Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 22:08:25 +0200
-Subject: [PATCH] FramePacer: repay time lost to late frames in small slices
+Subject: [PATCH 6/7] FramePacer: repay time lost to late frames in small
+ slices
 
 A frame that wakes more than 1.5 ms late starts a fresh full period, so
 there is never a visibly short recovery frame (86acb8b). One more than a
@@ -33,7 +34,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 32 insertions(+), 2 deletions(-)
 
 diff --git a/src/runtime/host_platform.cpp b/src/runtime/host_platform.cpp
-index 99c7813..c70c2a3 100644
+index 07f5de5..7a2617a 100644
 --- a/src/runtime/host_platform.cpp
 +++ b/src/runtime/host_platform.cpp
 @@ -1,5 +1,7 @@
@@ -61,10 +62,10 @@ index 99c7813..c70c2a3 100644
 +constexpr int kRepayDivisor = 16;
 +}  // namespace
 +
- void FramePacer::wait_for_next_frame() {
+ void FramePacer::wait_for_next_frame(uint64_t frames) {
      if (uncapped_) {
          next_ = clock::now();  // keep the deadline current for re-cap
-@@ -60,6 +73,9 @@ void FramePacer::wait_for_next_frame() {
+@@ -70,6 +83,9 @@ void FramePacer::wait_for_next_frame(uint64_t frames) {
      // of trying to replay the lost time (avoids a catch-up death spiral
      // after a hitch or a breakpoint pause).
      if (now > next_ + period_) {
@@ -74,7 +75,7 @@ index 99c7813..c70c2a3 100644
          next_ = now + period_;
          return;
      }
-@@ -103,8 +119,18 @@ void FramePacer::wait_for_next_frame() {
+@@ -113,8 +129,18 @@ void FramePacer::wait_for_next_frame(uint64_t frames) {
      // period instead of producing a visibly short recovery frame.
      const clock::time_point woke = clock::now();
      constexpr auto kLateTolerance = std::chrono::microseconds(1500);
@@ -96,10 +97,10 @@ index 99c7813..c70c2a3 100644
  
  std::vector<unsigned char> read_file(const std::string& path, std::string* error) {
 diff --git a/src/runtime/host_platform.h b/src/runtime/host_platform.h
-index 2b48ab3..97336e0 100644
+index 42208db..aff2c2e 100644
 --- a/src/runtime/host_platform.h
 +++ b/src/runtime/host_platform.h
-@@ -56,6 +56,10 @@ private:
+@@ -66,6 +66,10 @@ private:
      using clock = std::chrono::steady_clock;
      std::chrono::nanoseconds period_{};
      clock::time_point next_{};

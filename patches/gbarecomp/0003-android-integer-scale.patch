@@ -1,7 +1,7 @@
-From acf53bcde8ed6056c37ae30464f276f8e73cb510 Mon Sep 17 00:00:00 2001
+From 7284def2fc08f20b9b365f61a7b79a8b72ac6b09 Mon Sep 17 00:00:00 2001
 From: Saverio Moscardini <4923627+savemosca@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 00:05:42 +0200
-Subject: [PATCH] Android: optional integer-scale presentation
+Subject: [PATCH 3/7] Android: optional integer-scale presentation
 
 The Android full-screen layout fills the display height (6.75x on a 1080p
 panel). Integer scale instead picks the largest whole multiple that fits
@@ -14,37 +14,34 @@ panel). Integer scale instead picks the largest whole multiple that fits
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/runtime/host_window.cpp | 46 ++++++++++++++++++++++++++++++++++++-
- src/runtime/host_window.h   |  6 +++++
- src/runtime/runtime.cpp     | 19 +++++++++++----
- 3 files changed, 66 insertions(+), 5 deletions(-)
+ src/runtime/host_window.cpp | 43 +++++++++++++++++++++++++++++++++++++
+ src/runtime/host_window.h   |  6 ++++++
+ src/runtime/runtime.cpp     | 16 +++++++++++---
+ 3 files changed, 62 insertions(+), 3 deletions(-)
 
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index 7cd986c..c0b00b1 100644
+index 6aef847..3503e7b 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
-@@ -385,6 +385,9 @@ struct Backend {
-     // A game input policy consumes touches (RunOptions::input_frame).
-     bool touch_policy = false;
-     std::uint32_t touch_claims = 0;
+@@ -388,6 +388,9 @@ struct Backend {
+     // Enhanced (MP2K shadow) audio; saved = the player chose it in the menu.
+     bool audio_enhanced = false;
+     bool audio_enhanced_saved = false;
 +    // Whole-multiple presentation; saved = the player chose it in the menu.
 +    bool integer_scale = false;
 +    bool integer_scale_saved = false;
      bool touch_emulation = false;   // desktop mouse -> touch
      float px_per_mm = 96.0f / 25.4f;
      float logical_px_per_mm = 96.0f / 25.4f;  // SDL-reported (logical) density
-@@ -1148,7 +1151,9 @@ void save_touch_config(const Backend* b) {
-             while (!line.empty() && line.back() == '\r') line.pop_back();
-             const size_t s = line.find_first_not_of(" \t");
+@@ -1176,6 +1179,7 @@ void save_touch_config(const Backend* b) {
              const bool header = s != std::string::npos && line[s] == '[';
--            if (header) in_section = line.compare(s, 7, "[Touch]") == 0;
-+            if (header)
-+                in_section = line.compare(s, 7, "[Touch]") == 0 ||
-+                             line.compare(s, 9, "[Display]") == 0;
+             if (header)
+                 in_section = line.compare(s, 7, "[Touch]") == 0 ||
++                             line.compare(s, 9, "[Display]") == 0 ||
+                              line.compare(s, 7, "[Audio]") == 0;
              if (in_section) continue;
              kept.push_back(line);
-         }
-@@ -1165,6 +1170,10 @@ void save_touch_config(const Backend* b) {
+@@ -1193,6 +1197,10 @@ void save_touch_config(const Backend* b) {
          f << "toggle_x = " << b->toggle_fx << "\n";
          f << "toggle_y = " << b->toggle_fy << "\n";
      }
@@ -52,10 +49,10 @@ index 7cd986c..c0b00b1 100644
 +        f << "\n[Display]\n";
 +        f << "integer_scale = " << (b->integer_scale ? 1 : 0) << "\n";
 +    }
- }
- 
- // GBA KEYINPUT bit order: 0=A 1=B 2=Sel 3=Sta 4=Right 5=Left 6=Up 7=Down 8=R 9=L.
-@@ -1471,6 +1480,16 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
+     if (b->audio_enhanced_saved) {
+         f << "\n[Audio]\n";
+         f << "enhanced = " << (b->audio_enhanced ? 1 : 0) << "\n";
+@@ -1503,6 +1511,16 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
          // are no side rails to reserve, so the image fills the display too.
          layout = compute_adaptive_presentation_layout(drawable_w, drawable_h,
                                                        b->base_w, b->base_h);
@@ -72,7 +69,7 @@ index 7cd986c..c0b00b1 100644
      } else {
          // Pad-only titles: reserve roughly one fifth of the display on each
          // side for the controls. Prefer an exact integer multiple so pixel art
-@@ -2672,6 +2691,29 @@ void HostWindow::set_touch_config_dir(const char* dir) {
+@@ -2851,6 +2869,13 @@ void HostWindow::set_touch_config_dir(const char* dir) {
              b->toggle_pos_saved = true;
          }
      });
@@ -83,8 +80,13 @@ index 7cd986c..c0b00b1 100644
 +            b->integer_scale_saved = true;
 +        }
 +    });
-+}
-+
+     ini_scan_section((b->touch_config_dir + "/config.ini").c_str(), "Audio",
+                      [b](const char* key, const char* val) {
+         if (SDL_strcasecmp(key, "enhanced") == 0) {
+@@ -2860,6 +2885,22 @@ void HostWindow::set_touch_config_dir(const char* dir) {
+     });
+ }
+ 
 +void HostWindow::set_integer_scale(bool enabled, bool persist) {
 +    if (!open_ || !impl_) return;
 +    auto* b = static_cast<Backend*>(impl_);
@@ -99,26 +101,28 @@ index 7cd986c..c0b00b1 100644
 +bool HostWindow::integer_scale() const {
 +    if (!open_ || !impl_) return false;
 +    return static_cast<const Backend*>(impl_)->integer_scale;
- }
- 
- bool HostWindow::touch_pad_visible() const {
-@@ -3210,6 +3252,8 @@ int  HostWindow::volume() const { return 100; }
++}
++
+ bool HostWindow::saved_audio_enhanced(bool& enabled) const {
+     if (!open_ || !impl_) return false;
+     auto* b = static_cast<const Backend*>(impl_);
+@@ -3413,6 +3454,8 @@ int  HostWindow::volume() const { return 100; }
  int  HostWindow::window_scale() const { return 1; }
  void HostWindow::set_linear_filter(bool /*enabled*/) {}
  bool HostWindow::linear_filter() const { return false; }
 +void HostWindow::set_integer_scale(bool /*enabled*/, bool /*persist*/) {}
 +bool HostWindow::integer_scale() const { return false; }
+ bool HostWindow::saved_audio_enhanced(bool& /*enabled*/) const { return false; }
+ void HostWindow::save_audio_enhanced(bool /*enabled*/) {}
  void HostWindow::set_audio_enabled(bool /*enabled*/) {}
- bool HostWindow::audio_enabled() const { return false; }
- void HostWindow::set_resize_driven_view(bool /*enabled*/) {}
 diff --git a/src/runtime/host_window.h b/src/runtime/host_window.h
-index ddd3794..670d2a2 100644
+index 073ef16..4bc9a2b 100644
 --- a/src/runtime/host_window.h
 +++ b/src/runtime/host_window.h
-@@ -98,6 +98,12 @@ public:
-     int  window_scale() const;
-     void set_linear_filter(bool enabled);
-     bool linear_filter() const;
+@@ -103,6 +103,12 @@ public:
+     // false until the player has chosen.
+     bool saved_audio_enhanced(bool& enabled) const;
+     void save_audio_enhanced(bool enabled);
 +    // Whole-multiple presentation (Android full-screen layout): e.g. 6x =
 +    // 1440x960 on a 1080p panel instead of the height-filling 6.75x. A
 +    // `persist` change is remembered in config.ini [Display] and wins over
@@ -129,10 +133,10 @@ index ddd3794..670d2a2 100644
      bool audio_enabled() const;
      void set_resize_driven_view(bool enabled);
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index e07b7b7..600dde9 100644
+index df7c2f4..ad66d13 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
-@@ -193,6 +193,9 @@ struct Args {
+@@ -197,6 +197,9 @@ struct Args {
      bool sharp_filter = false;    // --sharp-filter 1: integer prescale + linear finish
      int internal_resolution = 1;
      bool internal_resolution_set = false;
@@ -142,7 +146,7 @@ index e07b7b7..600dde9 100644
      bool affine_filter = false;   // --affine-filter 1: game-authorized smoothing
      float gyro_sensitivity = 0.25f; // --gyro-sensitivity 0.25..4.00
      // [audio] shadow = true|false — arm the MP2K verified-enhancement shadow
-@@ -284,6 +287,7 @@ int runtime_ui_get(void* opaque, const RecompRuntimeUiItem* item, int* out) {
+@@ -293,6 +296,7 @@ int runtime_ui_get(void* opaque, const RecompRuntimeUiItem* item, int* out) {
      else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_RESOLUTION_SCALE) == 0 && c->internal_resolution)
          *out = *c->internal_resolution;
      else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER) == 0) *out = c->window->linear_filter();
@@ -150,7 +154,7 @@ index e07b7b7..600dde9 100644
      else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_AUDIO) == 0) *out = c->window->audio_enabled();
      else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VOLUME) == 0) *out = c->window->volume();
      else if (std::strcmp(item->key, GBARECOMP_UI_KEY_STATE_SLOT) == 0) *out = c->state_slot;
-@@ -318,6 +322,8 @@ int runtime_ui_set(void* opaque, const RecompRuntimeUiItem* item, int value) {
+@@ -329,6 +333,8 @@ int runtime_ui_set(void* opaque, const RecompRuntimeUiItem* item, int value) {
          *c->internal_resolution = std::clamp(value, 1, int(gba::GbaHighResolutionFrame::kMaxScale));
      else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER) == 0)
          c->window->set_linear_filter(value != 0);
@@ -159,7 +163,7 @@ index e07b7b7..600dde9 100644
      else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_AUDIO) == 0)
          c->window->set_audio_enabled(value != 0);
      else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VOLUME) == 0)
-@@ -784,6 +790,8 @@ bool apply_toml_file(const std::filesystem::path& path, Args* args,
+@@ -810,6 +816,8 @@ bool apply_toml_file(const std::filesystem::path& path, Args* args,
                  return false;
              }
              args->internal_resolution = scale;
@@ -168,15 +172,15 @@ index e07b7b7..600dde9 100644
          } else if (section == "video" && key == "affine_filter") {
              args->affine_filter = (val == "true" || val == "1");
          } else if (section == "video" && key == "widescreen") {
-@@ -3074,6 +3082,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3187,6 +3195,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
              win.configure_touch(opts.input_frame != nullptr,
                                  opts.touch_gesture_claims,
                                  opts.touch_pad_default, args.touch_emulation);
 +            win.set_integer_scale(args.integer_scale, /*persist=*/false);
              win.set_touch_config_dir(exe_dir.c_str());
-         }
-         win.set_host_overlay(opts.host_overlay);
-@@ -3193,11 +3202,13 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+             // The player's menu choice wins over [audio].shadow;
+             // GBARECOMP_AUDIO_SHADOW still overrides both.
+@@ -3313,15 +3322,16 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  RECOMP_RUNTIME_UI_STANDARD_SAVE_STATE |
                  RECOMP_RUNTIME_UI_STANDARD_LOAD_STATE;
          }
@@ -185,15 +189,17 @@ index e07b7b7..600dde9 100644
          // ever produces integer scales (clamped 1..8), so there is no
 -        // fractional mode for a toggle to switch off. Offering one would
 -        // advertise a choice the presentation path cannot make.
--#if !defined(__ANDROID__)
 +        // fractional mode for a toggle to switch off. Android's full-screen
 +        // layout does fill the display fractionally, so it offers the choice.
-+#if defined(__ANDROID__)
-+        runtime_ui_config.features |= RECOMP_RUNTIME_UI_STANDARD_INTEGER_SCALE;
-+#else
+ #if !defined(__ANDROID__)
          runtime_ui_config.features |=
              RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN |
              RECOMP_RUNTIME_UI_STANDARD_WINDOW_SCALE;
+ #else
++        runtime_ui_config.features |= RECOMP_RUNTIME_UI_STANDARD_INTEGER_SCALE;
+         // A mobile game has no window to close and the system Back button is
+         // routed to the game, so the menu is the only clean way out: it ends
+         // the session (save flushed, no suspend state) and the Activity
 -- 
 2.56.0
 
