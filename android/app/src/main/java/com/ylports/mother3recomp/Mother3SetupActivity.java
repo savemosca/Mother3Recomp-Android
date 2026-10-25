@@ -49,6 +49,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     private static final String LAST_LOG = "last_log_snapshot";
     private Button raButton;
     private Button cloudButton;
+    private TextView saveWarning;
     private CloudSaves cloudSaves;
     private GbaGameConfig gameConfig;
     /** The APK embeds the ROM/BIOS: this screen is the launcher. */
@@ -154,6 +155,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         playButton.setOnClickListener(view -> startActivity(new Intent(this, gameActivityClass())));
         page.addView(playButton, column(dp(58), 0, 0, dp(12)));
 
+        saveWarning = label("", 13, Color.rgb(255, 211, 78));
+        page.addView(saveWarning, column(-2, 0, 0, dp(12)));
+        refreshSaveWarning();
+
         raButton = launcherButton("", false);
         raButton.setOnClickListener(view -> showRetroAchievementsDialog());
         page.addView(raButton, column(dp(48), 0, 0, dp(10)));
@@ -163,6 +168,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         cloudButton.setOnClickListener(view -> cloudSaves.showSettings());
         page.addView(cloudButton, column(dp(48), 0, 0, dp(10)));
         refreshCloudButton();
+
+        Button backupsButton = launcherButton("Suspend backups", false);
+        backupsButton.setOnClickListener(view -> showSuspendBackups());
+        page.addView(backupsButton, column(dp(48), 0, 0, dp(10)));
 
         Button optionsButton = launcherButton("Options", false);
         optionsButton.setOnClickListener(view -> showOptionsDialog());
@@ -221,6 +230,88 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    // ── Suspend state safety ──────────────────────────────────────────────
+
+    private void refreshSaveWarning() {
+        if (saveWarning == null) return;
+        int days = SuspendBackups.saveLagDays(getFilesDir(), gameConfig.romFile);
+        if (days == 0) {
+            saveWarning.setVisibility(View.GONE);
+            return;
+        }
+        saveWarning.setText((days == SuspendBackups.NO_SAVE
+                ? "No in-game save yet."
+                : "Your in-game save is " + days + (days == 1 ? " day" : " days")
+                    + " older than where you left off.")
+            + "\nSave in the game: progress since then lives only in the suspend state.");
+        saveWarning.setVisibility(View.VISIBLE);
+    }
+
+    /** Lists the suspend-state backups and puts one back for the next PLAY. */
+    private void showSuspendBackups() {
+        if (org.libsdl.app.SdlSession.nativeRunning()) {
+            // It would write its own state over the restored one when it suspends.
+            Toast.makeText(this, "The game is still closing. Try again in a moment.",
+                Toast.LENGTH_SHORT).show();
+            return;
+        }
+        File[] backups = SuspendBackups.list(getFilesDir(), gameConfig.romFile);
+        if (backups.length == 0) {
+            new AlertDialog.Builder(this)
+                .setTitle("Suspend backups")
+                .setMessage("No backups yet. One is made each time PLAY resumes a suspended game.")
+                .setPositiveButton("OK", null)
+                .show();
+            return;
+        }
+        String[] labels = new String[backups.length];
+        for (int i = 0; i < backups.length; ++i) labels[i] = backupLabel(backups[i]);
+        new AlertDialog.Builder(this)
+            .setTitle("Resume from an earlier point")
+            .setItems(labels, (dialog, which) -> confirmRestore(backups[which], labels[which]))
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void confirmRestore(File backup, String label) {
+        new AlertDialog.Builder(this)
+            .setTitle("Resume from " + label + "?")
+            .setMessage("PLAY will continue from this point. Where you are now is backed up "
+                + "first, so you can come back to it from this list.")
+            .setPositiveButton("Restore", (dialog, which) -> {
+                try {
+                    SuspendBackups.restore(getFilesDir(), gameConfig.romFile, backup);
+                    Toast.makeText(this, "Restored. PLAY resumes from " + label + ".",
+                        Toast.LENGTH_LONG).show();
+                } catch (IOException e) {
+                    Toast.makeText(this, "Restore failed: " + e.getMessage(),
+                        Toast.LENGTH_LONG).show();
+                }
+                refreshSaveWarning();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    /** "25 Oct 2026, 19:45" from mother3_en.20261025-194529.state. */
+    private static String backupLabel(File backup) {
+        String name = backup.getName();
+        String[] parts = name.split("\\.");
+        if (parts.length >= 3) {
+            try {
+                java.util.Date when = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                    .parse(parts[parts.length - 2]);
+                if (when != null) {
+                    return new java.text.SimpleDateFormat("d MMM yyyy, HH:mm", java.util.Locale.US)
+                        .format(when);
+                }
+            } catch (java.text.ParseException ignored) {
+                // fall back to the file name
+            }
+        }
+        return name;
     }
 
     // ── Options ───────────────────────────────────────────────────────────
@@ -413,6 +504,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             .apply();
 
         super.onResume();
+        refreshSaveWarning();
         showNativeLogIfChanged();
         // Only after a game started from PLAY (remembered across recreation).
         cloudSaves.syncAfterPlay();
