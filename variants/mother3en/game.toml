@@ -161,3 +161,16 @@ note = "IWRAM-resident copy of SoundMainRAM"
 start = 0x08000004
 end   = 0x080000C0
 note  = "cartridge header (logo, title, checksums)"
+
+# Widescreen: the field culls actors against the native 240x160 view through
+# these two overlap tests (rect, pos, size). src/m3_widescreen.cpp answers them
+# against the widened view while widescreen is on; see docs/re/widescreen.md.
+[[mod_function_hook]]
+addr = 0x080357D0
+mode = "thumb"
+note = "actor box vs view rect overlap (widescreen culling)"
+
+[[mod_function_hook]]
+addr = 0x08035820
+mode = "thumb"
+note = "actor box vs view rect overlap, looping maps (widescreen culling)"

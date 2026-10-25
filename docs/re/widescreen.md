@@ -1,7 +1,10 @@
 # Widescreen: reveal more of the world instead of stretching
 
-Status: **ported from upstream, 284x160** (2026-10-24); not yet tried on
-the RG556. The original assessment (2026-10-15) follows the section below.
+Status: **ported from upstream, 284x160** (2026-10-24), running on the
+RG556 since 2026-10-25 after a performance fix; weather overlays and actor
+culling against the widened view are built but not yet installed. Details
+and open items: `docs/OPEN-POINTS.md` items 1 and 1a. The original
+assessment (2026-10-15) follows the section below.
 It also covers a later voxel 3D overworld.
 
 ## Update 2026-10-24: upstream implemented it
