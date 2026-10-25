@@ -65,7 +65,7 @@ Done and installed in the player's app (2026-10-25 20:27; state backups in
   and `IO_0` sections.
 
 To do:
-- Looping maps (gGame+0x11 bits 4/5): done (built, not installed yet).
+- Looping maps (gGame+0x11 bits 4/5): done (installed 2026-10-25 20:40).
   `overlap_view()` reproduces 0x08035820's wrap path with the game's 16-bit
   arithmetic and the widened width instead of its built-in 240. Checked
   headless with the loop bits forced on in two states and the widening set
@@ -100,10 +100,13 @@ Ordered by impact on the player.
    Done: `SuspendBackups` (installed 2026-10-25) copies the state and its
    `.ra` sidecar to `files/suspend-backups/<stem>.<state time>.state` before
    every PLAY, after the cloud sync, keeping 8; first copy verified on the
-   device. Restore by hand: copy back to `roms/`, create
-   `roms/<stem>.suspend.pending`. Still open: a restore entry in the
-   launcher, a warning when the `.sav` is much older than the state, syncing
-   the state, checking that the state loads before an engine update. The
+   device. Since 2026-10-25 20:40 the launcher also warns under PLAY when the
+   `.sav` is a day or more older than the state PLAY resumes (or missing),
+   and "Suspend backups" puts a chosen copy back (backing up the current
+   state first). Still open: syncing the state, checking that the state
+   loads before an engine update. Note: copying a `.sav` with plain `cp`
+   resets its date and silences the warning; use `cp -p` (the player's was
+   reset to its true 2026-10-15 date with `touch -r`). The
    player's `.sav` still dates from 2026-10-15: save in game.
 2. **`m3widescreen` read the map through the emulated bus per margin
    pixel.** Fixed, see item 1.
@@ -119,12 +122,14 @@ Ordered by impact on the player.
    30 fps). Mitigations: get #44-#50 merged upstream, and gate each engine
    bump on `ctest` plus `tools/rg556-idle-bench.sh` against the previous
    build.
-5. **Always-on diagnostic replay (upstream 6076e7b)** fingerprints state
-   every frame and checkpoints periodically; measured ~0.4 points of late
-   frames in the test app. Consider defaulting it off on Android.
-6. Minor: `tools/build-android-ci.yml` (inherited, inactive) carries a
-   keystore password in plain text (the key itself was never committed;
-   delete the file); `build-android.sh` embeds the ROM by default (output
+5. **Always-on diagnostic replay (upstream 6076e7b)**: off by default on
+   Android since 2026-10-25 (`diagnostic_replay_default`); config.ini
+   `[Diagnostics] replay_capture = 1` turns it on to record a bug.
+6. Minor: `tools/build-android-ci.yml` (inherited, inactive, with the
+   upstream dev keystore password) was removed on 2026-10-25; the encoded
+   key itself sits in upstream's first commit 18ae6a5 and in this fork's
+   history, so treat that dev key as public (the player's app is signed
+   with the Mac's debug key, not with it); `build-android.sh` embeds the ROM by default (output
    named `*-PRIVATE-rom-included.apk`); RetroAchievements unlocks earned
    offline are lost if the game is quit before reconnecting.
 
