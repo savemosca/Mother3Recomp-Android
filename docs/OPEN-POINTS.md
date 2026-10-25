@@ -189,9 +189,14 @@ Phase 3: migrate the player's save; keep this fork working until then.
 - mstan/gbarecomp #44-#50 open, no reviews. Patch 0018 (pacer debt
   repayment) not yet proposed; mind that wait_for_next_frame() owns the
   deadline update (see e496af6 on `m3recomp-engine`).
-- josiahg2502-glitch/Mother3Recomp #31 (engine bridge iret + tests), #32 (HQ
-  audio toggle) open. Candidates: macOS link fix, RG556 preset, the engine
-  move to mstan.
+- josiahg2502-glitch/Mother3Recomp, open from savemosca/Mother3Recomp-1:
+  #31 (engine bridge iret + tests), #32 (HQ audio toggle), #33 (widescreen:
+  stutter, clouds, actors; same code as item 1/1a, tested with their engine
+  af47d28), #34 (macOS link), #35 (RG556 preset). Still a candidate: the
+  engine move to mstan (strategy C).
+- The upstream of this fork (josiahg2502-glitch/Mother3Recomp-Android) is
+  archived: its PRs #1-#3 from savemosca can't be merged any more; this
+  fork's default branch `rg556-tuning` is the published state.
 
 ## 5. Housekeeping
 
