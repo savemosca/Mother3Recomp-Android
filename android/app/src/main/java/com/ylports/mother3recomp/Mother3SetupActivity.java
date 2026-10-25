@@ -103,7 +103,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         }
         if (cloudSaves == null) {
             SessionArchive.archivePrevious(getFilesDir());
-            if (gameConfig != null) SuspendBackups.keep(getFilesDir(), gameConfig.romFile);
+            if (gameConfig != null) {
+                SuspendBackups.keep(getFilesDir(), gameConfig.romFile);
+                SuspendBackups.upgradeMarker(getFilesDir(), gameConfig.romFile);
+            }
             super.startActivity(intent);
             return;
         }
@@ -115,6 +118,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             // After the sync: a download leaves the state on disk but no longer
             // resumes it, and the game's next suspend overwrites it.
             SuspendBackups.keep(getFilesDir(), gameConfig.romFile);
+            SuspendBackups.upgradeMarker(getFilesDir(), gameConfig.romFile);
             cloudSaves.gameStarting();
             Mother3SetupActivity.super.startActivity(intent);
         });

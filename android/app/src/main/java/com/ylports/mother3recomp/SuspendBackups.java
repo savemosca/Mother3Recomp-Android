@@ -85,11 +85,68 @@ final class SuspendBackups {
         // RetroAchievements progress must match the state it belongs to.
         if (backupSidecar.isFile()) copyAtomically(backupSidecar, sidecar);
         else sidecar.delete();
-        // The engine resumes the state only while this marker exists; its
-        // content (the frame count it suspended at) is informational.
-        try (FileOutputStream out = new FileOutputStream(
-                new File(filesDir, "roms/" + stem + ".suspend.pending"))) {
-            out.write("0\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        // The engine resumes the state only while this marker exists and
+        // names the battery save as it is now.
+        writeMarker(filesDir, stem, "0");
+    }
+
+    /**
+     * Engines from mstan e353848 on resume a suspend state only when its
+     * marker ("frame", then the battery save's SHA-1) still matches the
+     * battery save, so a newer or downloaded .sav is never rolled back.
+     * Markers written before that hold only the frame and would be refused,
+     * discarding the player's progress on the first launch of the update.
+     * Before a game starts, such a marker is completed with the battery save
+     * as it is now: what the older engines trusted when they resumed it.
+     */
+    static void upgradeMarker(File filesDir, String romFile) {
+        String stem = stem(romFile);
+        File marker = new File(filesDir, "roms/" + stem + ".suspend.pending");
+        if (!marker.isFile()) return;
+        try {
+            String[] fields = new String(readAll(marker), java.nio.charset.StandardCharsets.US_ASCII)
+                .trim().split("\\s+");
+            if (fields.length != 1 || fields[0].isEmpty()) return;  // already fingerprinted
+            writeMarker(filesDir, stem, fields[0]);
+        } catch (IOException e) {
+            Log.w(TAG, "cannot upgrade " + marker.getName(), e);
+        }
+    }
+
+    /** The engine's suspend marker: the frame, then the battery save's SHA-1 ("missing" without one). */
+    private static void writeMarker(File filesDir, String stem, String frame) throws IOException {
+        File save = new File(filesDir, "roms/" + stem + ".sav");
+        String battery;
+        if (save.isFile()) {
+            try {
+                byte[] digest = java.security.MessageDigest.getInstance("SHA-1").digest(readAll(save));
+                StringBuilder hex = new StringBuilder();
+                for (byte b : digest) hex.append(String.format(Locale.US, "%02x", b & 0xff));
+                battery = hex.toString();
+            } catch (java.security.NoSuchAlgorithmException e) {
+                throw new IOException(e);
+            }
+        } else {
+            battery = "missing";
+        }
+        File marker = new File(filesDir, "roms/" + stem + ".suspend.pending");
+        File temp = new File(marker.getPath() + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(temp)) {
+            out.write((frame + "\n" + battery + "\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            out.getFD().sync();
+        }
+        if (!temp.renameTo(marker)) {
+            temp.delete();
+            throw new IOException("cannot write " + marker);
+        }
+    }
+
+    private static byte[] readAll(File file) throws IOException {
+        try (InputStream in = new FileInputStream(file)) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[64 << 10];
+            for (int n; (n = in.read(buffer)) > 0; ) out.write(buffer, 0, n);
+            return out.toByteArray();
         }
     }
 
