@@ -1,3 +1,9 @@
+> **Archived (2026-10-26).** This Android port moved to
+> [savemosca/Mother3Recomp-1](https://github.com/savemosca/Mother3Recomp-1),
+> branch `rg556`: josiahg2502-glitch/Mother3Recomp with this port's features
+> (RG556 tuning, widescreen fixes, RetroAchievements, cloud saves, suspend
+> backups) on the current mstan/gbarecomp engine. See `docs/RG556.md` there.
+
 # Mother3Recomp — MOTHER 3, Recompiled
 
 Static recompilation of **MOTHER 3** (Game Boy Advance) to native PC, built on
